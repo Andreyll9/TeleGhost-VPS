@@ -28,6 +28,11 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Set up Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
       - name: Prepare Android SDK & NDK
         run: |
           yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
@@ -64,8 +69,7 @@ jobs:
           keytool -genkey -v -keystore app/release-key.jks -keyalg RSA -keysize 2048 -validity 10000 \
             -alias teleghost -storepass teleghostpass -keypass teleghostpass \
             -dname "CN=TeleGhost, OU=Private, O=TeleGhost, L=City, S=State, C=US"
-          chmod +x gradlew
-          ./gradlew assembleRelease --no-daemon
+          gradle assembleRelease --no-daemon
 
       - name: Upload Signed APK
         uses: actions/upload-artifact@v4
