@@ -31,7 +31,6 @@ import (
 	"teleghost/internal/network/router"
 	"teleghost/internal/repository/sqlite"
 
-	"github.com/go-i2p/i2pkeys"
 
 	"github.com/google/uuid"
 )
