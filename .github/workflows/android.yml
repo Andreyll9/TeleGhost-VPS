@@ -28,11 +28,10 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android NDK
-        run: sdkmanager --install "ndk;26.1.10909125"
+      - name: Prepare Android SDK & NDK
+        run: |
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
+          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platforms;android-34" "build-tools;34.0.0" "ndk;26.1.10909125"
 
       - name: Clean Go Mod (remove I2P deps)
         run: go mod tidy
@@ -61,6 +60,7 @@ jobs:
       - name: Generate Signing Key & Build Signed APK
         working-directory: ./android
         run: |
+          rm -f app/release-key.jks
           keytool -genkey -v -keystore app/release-key.jks -keyalg RSA -keysize 2048 -validity 10000 \
             -alias teleghost -storepass teleghostpass -keypass teleghostpass \
             -dname "CN=TeleGhost, OU=Private, O=TeleGhost, L=City, S=State, C=US"
@@ -71,4 +71,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: TeleGhost-VPS-Signed-APK
-          path: android/app/build/outputs/apk/release/app-release.apk
+          path: android/app/build/outputs/apk/release/*.apk
