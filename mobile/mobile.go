@@ -16,7 +16,6 @@ package mobile
 
 import (
 	"bytes"
-	"context"
 	"embed"
 	"encoding/base64"
 	"encoding/json"
