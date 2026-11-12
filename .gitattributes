@@ -1,0 +1,2 @@
+# Exclude i2pd source code from project language statistics
+internal/network/i2pd/i2pd/** linguist-vendored

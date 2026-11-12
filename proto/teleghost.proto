@@ -1,0 +1,153 @@
+syntax = "proto3";
+
+package teleghost;
+
+option go_package = "github.com/teleghost/internal/proto;proto";
+
+// PacketType определяет тип пакета
+enum PacketType {
+  PACKET_TYPE_UNSPECIFIED = 0;
+  HEARTBEAT = 1;         // Keep-alive сигнал
+  TEXT_MESSAGE = 2;      // Текстовое сообщение
+  PROFILE_UPDATE = 3;    // Обновление профиля
+  HANDSHAKE = 4;         // Рукопожатие для установки соединения
+  MESSAGE_EDIT = 5;      // Редактирование сообщения
+  MESSAGE_DELETE = 6;    // Удаление сообщения
+  PROFILE_REQUEST = 7;   // Запрос обновления профиля
+  FILE_OFFER = 8;        // Предложение файла
+  FILE_RESPONSE = 9;     // Ответ на предложение
+}
+
+// Packet — универсальная обёртка для всех сообщений в сети
+message Packet {
+  // Версия протокола для обратной совместимости
+  uint32 version = 1;
+  
+  // Тип содержимого пакета
+  PacketType type = 2;
+  
+  // Публичный ключ отправителя (Ed25519, 32 bytes)
+  bytes sender_pub_key = 3;
+  
+  // Подпись payload (Ed25519 signature, 64 bytes)
+  bytes signature = 4;
+  
+  // Зашифрованное/сериализованное содержимое (в зависимости от type)
+  bytes payload = 5;
+}
+
+// Attachment — вложение к сообщению (изображение, файл)
+message Attachment {
+  string id = 1;
+  string filename = 2;
+  string mime_type = 3;
+  int64 size = 4;
+  bytes data = 5;        // Данные файла
+  bool is_compressed = 6; // true если это сжатая версия
+  int32 width = 7;       // Ширина (для изображений)
+  int32 height = 8;      // Высота (для изображений)
+}
+
+// TextMessage — текстовое сообщение в чате
+message TextMessage {
+  // Уникальный ID чата (обычно hash публичных ключей обоих участников)
+  string chat_id = 1;
+  
+  // Содержимое сообщения (UTF-8)
+  string content = 2;
+  
+  // Unix timestamp в миллисекундах
+  int64 timestamp = 3;
+  
+  // Уникальный ID сообщения (UUID)
+  string message_id = 4;
+
+  // Вложения
+  repeated Attachment attachments = 5;
+
+  // ID сообщения, на которое это ответ (опционально)
+  string reply_to_id = 6;
+}
+
+// ProfileUpdate — обновление профиля пользователя
+message ProfileUpdate {
+  // Никнейм пользователя (max 64 символа)
+  string nickname = 1;
+  
+  // Описание/био (max 256 символов)
+  string bio = 2;
+  
+  // Аватар (сжатое изображение, max 64KB, WebP/JPEG)
+  bytes avatar = 3;
+}
+
+// Handshake — начало сессии между двумя пирами
+message Handshake {
+  // Публичный ключ инициатора
+  bytes initiator_pub_key = 1;
+  
+  // Временный ключ для ECDH (X25519)
+  bytes ephemeral_pub_key = 2;
+  
+  // Nonce для предотвращения replay атак
+  bytes nonce = 3;
+  
+  // Timestamp для проверки свежести
+  int64 timestamp = 4;
+  
+  // Никнейм отправителя (для отображения в UI)
+  string nickname = 5;
+  
+  // I2P адрес отправителя (для обратной связи)
+  string i2p_address = 6;
+
+  // Аватар отправителя (сжатое изображение)
+  bytes avatar = 7;
+}
+
+// MessageEdit — редактирование существующего сообщения
+message MessageEdit {
+  // ID редактируемого сообщения
+  string message_id = 1;
+  
+  // Новое содержимое сообщения
+  string new_content = 2;
+  
+  // Timestamp редактирования
+  int64 timestamp = 3;
+  
+  // ID чата (для маршрутизации)
+  string chat_id = 4;
+}
+
+// MessageDelete — удаление сообщения
+message MessageDelete {
+  // ID удаляемого сообщения
+  string message_id = 1;
+  
+  // Timestamp удаления
+  int64 timestamp = 2;
+  
+  // ID чата (для маршрутизации)
+  string chat_id = 3;
+  
+  // Удалить у всех (true) или только локально (false)
+  bool delete_for_all = 4;
+}
+
+// FileOffer — предложение отправки файлов (для подтверждения)
+message FileOffer {
+    string message_id = 1;
+    repeated string filenames = 2;
+    int64 total_size = 3;
+    int32 file_count = 4;
+    // Можно добавить previews, но пока опустим для простоты
+    string chat_id = 5;
+}
+
+// FileResponse — ответ на предложение
+message FileResponse {
+    string message_id = 1;
+    bool accepted = 2;
+    string chat_id = 3; 
+}

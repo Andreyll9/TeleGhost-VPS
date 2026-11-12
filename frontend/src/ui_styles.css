@@ -1,0 +1,349 @@
+/* Folders Rail */
+.folders-rail {
+    width: 72px;
+    background: var(--bg-tertiary);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 10px 0;
+    border-right: 1px solid var(--border);
+    flex-shrink: 0;
+    z-index: 20;
+}
+
+.folder-item {
+    width: 56px;
+    height: 56px;
+    border-radius: 12px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    cursor: pointer;
+    margin-bottom: 8px;
+    color: var(--text-secondary);
+    transition: background 0.2s, color 0.2s;
+    position: relative;
+}
+
+.folder-item:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.folder-item.active {
+    background: rgba(108, 92, 231, 0.1);
+    color: var(--accent);
+}
+
+.folder-item.active::before {
+    content: '';
+    position: absolute;
+    left: -8px;
+    /* Offset because of rail padding if any, or just 0 */
+    top: 12px;
+    bottom: 12px;
+    width: 4px;
+    background: var(--accent);
+    border-radius: 0 4px 4px 0;
+}
+
+.folder-icon {
+    font-size: 24px;
+    margin-bottom: 2px;
+}
+
+.folder-name {
+    font-size: 10px;
+    font-weight: 500;
+    text-align: center;
+    line-height: 1;
+}
+
+.rail-button {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    margin-bottom: 16px;
+    color: var(--text-secondary);
+    transition: all 0.2s;
+}
+
+.rail-button:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.rail-button.bottom {
+    margin-top: auto;
+}
+
+/* Resizer */
+.resizer {
+    width: 2px;
+    /* Thinner */
+    background: transparent;
+    cursor: col-resize;
+    flex-shrink: 0;
+    transition: background 0.2s;
+    z-index: 10;
+    position: relative;
+}
+
+/* Ensure easy grabbing */
+.resizer::after {
+    content: '';
+    position: absolute;
+    left: -2px;
+    right: -2px;
+    top: 0;
+    bottom: 0;
+    z-index: 10;
+}
+
+.resizer:hover,
+.resizer.resizing {
+    background: var(--accent);
+}
+
+/* Sidebar Search */
+.sidebar-search {
+    padding: 10px 14px;
+    background: var(--bg-secondary);
+}
+
+.search-input-wrapper {
+    background: var(--bg-input);
+    border-radius: 18px;
+    padding: 8px 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.search-icon {
+    color: var(--text-secondary);
+    font-size: 14px;
+}
+
+.search-input {
+    background: transparent;
+    border: none;
+    color: var(--text-primary);
+    width: 100%;
+    font-size: 14px;
+    outline: none;
+}
+
+.search-input::placeholder {
+    color: var(--text-secondary);
+}
+
+/* Hamburger Icon */
+.hamburger-icon {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    width: 18px;
+}
+
+.hamburger-icon span {
+    display: block;
+    width: 100%;
+    height: 2px;
+    background: currentColor;
+    border-radius: 2px;
+}
+
+.folder-item.add-folder-btn {
+    background: transparent;
+    border: 1px dashed var(--text-secondary);
+    opacity: 0.6;
+}
+
+.folder-item.add-folder-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    opacity: 1;
+    border-color: var(--text-primary);
+}
+
+/* File Attachment Card */
+.file-attachment-card {
+    display: flex;
+    align-items: center;
+    background: rgba(0, 0, 0, 0.1);
+    border-radius: 8px;
+    padding: 8px 12px;
+    margin-top: 4px;
+    cursor: pointer;
+    transition: background 0.2s;
+    max-width: 100%;
+    overflow: hidden;
+}
+
+.file-attachment-card:hover {
+    background: rgba(0, 0, 0, 0.15);
+}
+
+.file-icon {
+    font-size: 24px;
+    margin-right: 10px;
+    flex-shrink: 0;
+}
+
+.file-details {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.file-name {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.file-size {
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin-top: 2px;
+}
+
+.settings-select {
+    width: 100%;
+    padding: 10px;
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    appearance: none;
+    /* Remove default arrow on some browsers */
+}
+
+.settings-select option {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+}
+/* Settings Sidebar */
+.settings-sidebar {
+    width: 260px;
+    min-width: 260px;
+    background: var(--bg-secondary);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+.settings-sidebar-header {
+    padding: 24px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    border-bottom: 1px solid transparent; /* Potential for divider */
+}
+
+.settings-menu {
+    display: flex;
+    flex-direction: column;
+    padding: 12px;
+    gap: 4px;
+    flex: 1;
+    overflow-y: auto;
+}
+
+.settings-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    border-radius: 12px;
+    cursor: pointer;
+    color: var(--text-secondary);
+    background: transparent;
+    transition: all 0.2s ease;
+    font-weight: 500;
+}
+
+.settings-menu-item:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+    transform: translateX(4px);
+}
+
+.settings-menu-item.active {
+    background: var(--accent);
+    color: white;
+    box-shadow: 0 4px 12px rgba(108, 92, 231, 0.3);
+}
+
+.settings-menu-item .icon {
+    font-size: 20px;
+    width: 24px;
+    display: flex;
+    justify-content: center;
+}
+
+.settings-menu-item .name {
+    font-size: 15px;
+}
+
+/* Settings Content Area */
+.settings-content-area {
+    flex: 1;
+    padding: 40px;
+    overflow-y: auto;
+    color: var(--text-primary);
+    background: var(--bg-primary);
+}
+
+/* Settings Icon Active State in Sidebar */
+.rail-button.active {
+    background: rgba(108, 92, 231, 0.15);
+    color: var(--accent);
+    border: 1px solid rgba(108, 92, 231, 0.3);
+}
+
+.settings-menu-item .arrow {
+    margin-left: auto;
+    font-size: 12px;
+    color: var(--text-secondary);
+    opacity: 0.5;
+}
+
+/* Hamburger Active State */
+.rail-button.active .hamburger-icon span {
+    background: var(--accent);
+    box-shadow: 0 0 8px var(--accent);
+}
+
+/* Settings View Transitions */
+.settings-view-menu,
+.settings-view-details {
+    animation: fadeIn 0.3s ease-out;
+}
+
+@keyframes slideInRight {
+    from { opacity: 0; transform: translateX(20px); }
+    to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes slideInLeft {
+    from { opacity: 0; transform: translateX(-20px); }
+    to { opacity: 1; transform: translateX(0); }
+}
+
+.settings-view-details {
+    animation: slideInRight 0.2s ease-out;
+}
+
+.settings-view-menu {
+    animation: slideInLeft 0.2s ease-out;
+}

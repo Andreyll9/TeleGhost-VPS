@@ -1,0 +1,65 @@
+# Wails build output
+build/bin
+build/darwin
+build/windows
+!build/windows/icon.ico
+build/linux
+
+# Frontend
+node_modules
+frontend/dist
+frontend/build
+frontend/.svelte-kit
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+go.work
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# TeleGhost specific
+.teleghost/
+*.db
+*.db-shm
+*.db-wal
+
+# I2P data
+i2p/
+netDb/
+peerProfiles/
+
+# Secrets (ВАЖНО!)
+*.key
+*.pem
+mnemonic.txt
+private_keys/
+
+# AI & Testing Metafiles (Internal)
+ai-context.md
+TESTING.md
+TEST_REPORT.md
+task.md
+implementation_plan.md
+walkthrough.md
+android/.gradle/
+android/app/build/
+android/app/libs/*.aar
+*.aar
+mobile/dist/*
+# i2pd logs
+i2pd.log

@@ -1,0 +1,116 @@
+/* premium Design tokens */
+:root {
+    --bg-premium-gradient: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%);
+    --glass-bg: rgba(255, 255, 255, 0.03);
+    --glass-border: rgba(255, 255, 255, 0.1);
+    --glass-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.8);
+    --accent-glow: 0 0 15px rgba(99, 102, 241, 0.4);
+}
+
+/* Animations */
+@keyframes mesh-gradient {
+    0% {
+        background-position: 0% 50%;
+    }
+
+    50% {
+        background-position: 100% 50%;
+    }
+
+    100% {
+        background-position: 0% 50%;
+    }
+}
+
+.bg-animated {
+    background: linear-gradient(-45deg, #0f172a, #1e1b4b, #1e293b, #0f172a);
+    background-size: 400% 400%;
+    animation: mesh-gradient 15s ease infinite;
+}
+
+.glass-panel {
+    background: var(--glass-bg);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--glass-shadow);
+}
+
+@keyframes float {
+    0% {
+        transform: translateY(0px);
+    }
+
+    50% {
+        transform: translateY(-10px);
+    }
+
+    100% {
+        transform: translateY(0px);
+    }
+}
+
+.animate-float {
+    animation: float 4s ease-in-out infinite;
+}
+
+/* Rest of existing styles... */
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+html,
+body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    font-size: 14px;
+    line-height: 1.4;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #3a4654;
+    border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #4a5664;
+}
+
+/* Selection */
+::selection {
+    background: #5865F266;
+}
+
+/* Focus outline */
+:focus-visible {
+    outline: 2px solid #5865F2;
+    outline-offset: 2px;
+}
+
+/* Disable text selection on UI elements */
+button,
+.contact-item,
+.sidebar-header {
+    user-select: none;
+}
+
+/* Textarea auto-resize helper */
+textarea {
+    font-family: inherit;
+}

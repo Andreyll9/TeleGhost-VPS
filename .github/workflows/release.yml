@@ -1,0 +1,157 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+      - '[0-9]*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux:
+    name: Build Linux
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.7'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev libboost-all-dev libssl-dev zlib1g-dev libminiupnpc-dev cmake build-essential
+
+      - name: Install Wails
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+
+      - name: Build i2pd libraries
+        run: |
+          chmod +x internal/network/i2pd/build_linux.sh
+          ./internal/network/i2pd/build_linux.sh
+
+      - name: Build Wails App
+        run: |
+          export CGO_LDFLAGS_ALLOW="-Wl,--whole-archive|-Wl,--no-whole-archive|-Wl,--start-group|-Wl,--end-group|-Wl,-Bstatic|-Wl,-Bdynamic"
+          wails build -tags cgo_i2pd -platform linux/amd64 -ldflags '-extldflags "-static-libgcc -static-libstdc++"'
+
+      - name: Rename and Prepare Binary
+        run: |
+          mv build/bin/TeleGhost TeleGhost-linux-amd64
+          chmod +x TeleGhost-linux-amd64
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: teleghost-linux
+          path: TeleGhost-linux-amd64
+
+  # Note: Windows build is complex due to C++ dependencies (Boost/OpenSSL)
+  # This is a best-effort configuration.
+  build-windows:
+    name: Build Windows
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.7'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          path-type: inherit
+          install: >-
+            git
+            make
+            mingw-w64-x86_64-toolchain
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-boost
+            mingw-w64-x86_64-openssl
+            mingw-w64-x86_64-zlib
+
+      - name: Install Wails
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+
+      - name: Build i2pd libraries (Windows)
+        shell: msys2 {0}
+        run: |
+          chmod +x internal/network/i2pd/build_windows.sh
+          ./internal/network/i2pd/build_windows.sh
+
+      - name: Build Wails App
+        shell: msys2 {0}
+        run: |
+          export CGO_LDFLAGS_ALLOW="-Wl,--whole-archive|-Wl,--no-whole-archive"
+          # Ensure Go bin is in path for Wails
+          export PATH=$PATH:$(go env GOPATH)/bin
+          
+          # Build with cgo_i2pd and static linking
+          wails build -tags cgo_i2pd -platform windows/amd64 -ldflags '-extldflags "-static"'
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: teleghost-windows
+          path: build/bin/TeleGhost.exe
+
+  release:
+    name: Create Release
+    needs: [build-linux, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Linux Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: teleghost-linux
+
+      - name: Download Windows Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: teleghost-windows
+          
+      - name: Download AAR Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: teleghost-aar
+        continue-on-error: true
+
+      - name: Download APK Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: teleghost-android-debug
+        continue-on-error: true
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            TeleGhost-linux-amd64
+            TeleGhost.exe
+            teleghost.aar
+            *.apk
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
