@@ -44,7 +44,7 @@
 <div class="modal-backdrop animate-fade-in" on:click|self={close} role="button" tabindex="0" on:keydown={(e) => e.key === 'Escape' && close()}>
     <div class="modal-content animate-slide-down">
         <div class="modal-header">
-            <h3>Мой I2P адрес</h3>
+            <h3>Мой ID ключ</h3>
             <button class="btn-icon" on:click={close}>
                 <div class="icon-svg">{@html Icons.X}</div>
             </button>

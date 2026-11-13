@@ -1,4 +1,4 @@
-// Package appcore содержит общую бизнес-логику TeleGhost.
+// Package appcore содержит общую бизнес-логику Hydra.
 //
 // Этот пакет используется И десктопной (Wails), И мобильной (HTTP) версией.
 // Платформо-специфичные вещи (события, диалоги, буфер обмена) абстрагированы
@@ -12,12 +12,16 @@ package appcore
 
 import (
 	"archive/zip"
+	"bytes"
 	"context"
+	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,7 +34,6 @@ import (
 	"teleghost/internal/network/profiles"
 	"teleghost/internal/network/router"
 	"teleghost/internal/repository/sqlite"
-
 
 	"github.com/google/uuid"
 )
@@ -186,7 +189,7 @@ type RouterSettings struct {
 
 // ─── AppCore — единое ядро приложения ───────────────────────────────────────
 
-// AppCore содержит ВСЮ бизнес-логику TeleGhost.
+// AppCore содержит ВСЮ бизнес-логику Hydra.
 // Используется и десктопной, и мобильной версией.
 type AppCore struct {
 	Ctx    context.Context
@@ -272,6 +275,24 @@ func (a *AppCore) Shutdown() {
 
 // UpdateMyProfile обновляет профиль пользователя в БД и в менеджере профилей.
 func (a *AppCore) UpdateMyProfile(nickname, bio, avatar string) error {
+	if strings.TrimSpace(nickname) != "" && a.Identity != nil {
+		cleanNick := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(nickname), "@"))
+		pub := a.Identity.Keys.Destination
+		sig := ed25519.Sign(a.Identity.Keys.SigningPrivateKey, []byte("HYDRA-NICK:"+cleanNick+":"+pub))
+		reqBody, _ := json.Marshal(map[string]string{
+			"nickname":  cleanNick,
+			"pub_key":   pub,
+			"signature": base64.StdEncoding.EncodeToString(sig),
+		})
+		client := &http.Client{Timeout: 5 * time.Second}
+		resp, err := client.Post("http://191.223.137.164:8085/nick/register", "application/json", bytes.NewReader(reqBody))
+		if err == nil {
+			defer resp.Body.Close()
+			if resp.StatusCode == http.StatusConflict {
+				return fmt.Errorf("этот никнейм уже занят другим пользователем")
+			}
+		}
+	}
 	log.Printf("[AppCore] Updating profile: nickname=%s, bio=%s, avatarLen=%d", nickname, bio, len(avatar))
 	if a.Repo == nil {
 		return fmt.Errorf("not logged in")
@@ -992,7 +1013,7 @@ func (a *AppCore) UpdateUnreadCount() {
 
 // SendNotification формирует и отправляет системное уведомление.
 func (a *AppCore) SendNotification(senderName, content, contentType string) {
-	title := fmt.Sprintf("TeleGhost - %s", senderName)
+	title := fmt.Sprintf("Hydra - %s", senderName)
 	message := content
 
 	switch contentType {

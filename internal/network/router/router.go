@@ -386,3 +386,98 @@ func (r *SAMRouter) Accept() (net.Conn, error) {
 
 	return listener.Accept()
 }
+
+var globalEdPriv ed25519.PrivateKey
+
+func SetGlobalPrivateKey(priv ed25519.PrivateKey) {
+	globalEdPriv = priv
+}
+
+func ed25519PrivateKeyToCurve25519(pk ed25519.PrivateKey) []byte {
+	h := sha512.New()
+	h.Write(pk.Seed())
+	out := h.Sum(nil)
+	out[0] &= 248
+	out[31] &= 127
+	out[31] |= 64
+	return out[:32]
+}
+
+var curveP, _ = new(big.Int).SetString("57896044618658097711785492504343953926634992332820282019728792003956564819949", 10)
+
+func ed25519PublicKeyToCurve25519(pk ed25519.PublicKey) ([]byte, error) {
+	if len(pk) != ed25519.PublicKeySize {
+		return nil, fmt.Errorf("invalid pubkey")
+	}
+	yBytes := make([]byte, 32)
+	copy(yBytes, pk)
+	yBytes[31] &= 127
+	for i := 0; i < 16; i++ {
+		yBytes[i], yBytes[31-i] = yBytes[31-i], yBytes[i]
+	}
+	y := new(big.Int).SetBytes(yBytes)
+	one := big.NewInt(1)
+	num := new(big.Int).Add(one, y)
+	den := new(big.Int).Sub(one, y)
+	den.Mod(den, curveP)
+	denInv := new(big.Int).ModInverse(den, curveP)
+	if denInv == nil {
+		return nil, fmt.Errorf("non-invertible")
+	}
+	u := new(big.Int).Mul(num, denInv)
+	u.Mod(u, curveP)
+	uBytes := u.Bytes()
+	out := make([]byte, 32)
+	for i := 0; i < len(uBytes); i++ {
+		out[i] = uBytes[len(uBytes)-1-i]
+	}
+	return out, nil
+}
+
+func deriveECDHKey(myPub, peerPub string) cipher.AEAD {
+	if len(globalEdPriv) == ed25519.PrivateKeySize {
+		peerBytes, err1 := base64.StdEncoding.DecodeString(peerPub)
+		if err1 == nil && len(peerBytes) == ed25519.PublicKeySize {
+			privX := ed25519PrivateKeyToCurve25519(globalEdPriv)
+			pubX, err2 := ed25519PublicKeyToCurve25519(peerBytes)
+			if err2 == nil {
+				shared, err3 := curve25519.X25519(privX, pubX)
+				if err3 == nil {
+					hash := sha256.Sum256(append([]byte("HYDRA-ECDH-v2:"), shared...))
+					aead, _ := chacha20poly1305.NewX(hash[:])
+					return aead
+				}
+			}
+		}
+	}
+	first, second := myPub, peerPub
+	if first > second {
+		first, second = second, first
+	}
+	hash := sha256.Sum256([]byte("TG-E2EE-v1:" + first + ":" + second))
+	aead, _ := chacha20poly1305.NewX(hash[:])
+	return aead
+}
+
+func sealE2EE(myPub, peerPub string, plain []byte) []byte {
+	aead := deriveECDHKey(myPub, peerPub)
+	if aead == nil {
+		return plain
+	}
+	nonce := make([]byte, aead.NonceSize(), aead.NonceSize()+len(plain)+aead.Overhead())
+	_, _ = rand.Read(nonce)
+	return aead.Seal(nonce, nonce, plain, nil)
+}
+
+func openE2EE(myPub, peerPub string, cipherData []byte) []byte {
+	aead := deriveECDHKey(myPub, peerPub)
+	if aead == nil || len(cipherData) < aead.NonceSize() {
+		return cipherData
+	}
+	nonce := cipherData[:aead.NonceSize()]
+	out, err := aead.Open(nil, nonce, cipherData[aead.NonceSize():], nil)
+	if err != nil {
+		return cipherData
+	}
+	return out
+}

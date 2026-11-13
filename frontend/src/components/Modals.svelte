@@ -68,6 +68,26 @@
 
     // Close I2P when contact profile closes
     $: if (!showContactProfile) showFullAddress = false;
+
+    async function handleScanQRFile(e) {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        try {
+            if ('BarcodeDetector' in window) {
+                const bitmap = await createImageBitmap(file);
+                const detector = new BarcodeDetector({ formats: ['qr_code'] });
+                const codes = await detector.detect(bitmap);
+                if (codes.length > 0 && codes[0].rawValue) {
+                    newContactDest = codes[0].rawValue.trim();
+                    return;
+                }
+            }
+            alert('На этом устройстве отсканируйте QR камерой и нажмите Вставить');
+        } catch (err) {
+            console.error(err);
+        }
+    }
+
 </script>
 
 <!-- Custom Confirm Modal -->

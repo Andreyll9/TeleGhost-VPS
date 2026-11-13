@@ -48,7 +48,7 @@ export function getStatusText(status) {
     switch (status) {
         case 'online': return 'В сети';
         case 'connecting': return 'Подключение...';
-        case 'starting': return 'Запуск I2P...';
+        case 'starting': return 'Подключение к узлу Hydra...';
         case 'error': return 'Ошибка I2P';
         default: return 'Оффлайн';
     }

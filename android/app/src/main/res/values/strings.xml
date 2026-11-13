@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">TeleGhost</string>
-    <string name="notification_channel_name">TeleGhost I2P Service</string>
+    <string name="app_name">Hydra</string>
+    <string name="notification_channel_name">Hydra I2P Service</string>
     <string name="notification_channel_description">Фоновая служба анонимного мессенджера I2P</string>
-    <string name="notification_title">TeleGhost работает</string>
-    <string name="notification_text">I2P роутер активен. Ваши сообщения защищены.</string>
+    <string name="notification_title">Hydra активна</string>
+    <string name="notification_text">Защищённый канал E2EE (X25519 + XChaCha20) активен.</string>
     <string name="notification_stop">Остановить</string>
 </resources>

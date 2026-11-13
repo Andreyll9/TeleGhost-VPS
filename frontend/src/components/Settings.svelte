@@ -51,6 +51,21 @@
             alert('Ошибка импорта: ' + e);
         }
     }
+
+    let pingStatusText = '';
+    let isPingingServer = false;
+    async function verifyHydraConnection() {
+        isPingingServer = true;
+        pingStatusText = 'Отправка тестового E2EE-пакета через Relay...';
+        try {
+            await AppActions.AddContact('__PING_SERVER__', 'ping');
+        } catch (err) {
+            pingStatusText = typeof err === 'string' ? err : (err?.message || String(err));
+        } finally {
+            isPingingServer = false;
+        }
+    }
+
 </script>
 
 <div class="settings-panel animate-fade-in">
@@ -149,7 +164,7 @@
                 {:else if activeSettingsTab === 'network'}
                     <div class="settings-section">
                         <details class="destination-details">
-                            <summary class="form-label">Ваш I2P адрес (Destination) <span class="hint-inline">(нажмите, чтобы развернуть)</span></summary>
+                            <summary class="form-label">Ваш ID (Крипто-ключ Hydra) <span class="hint-inline">(нажмите, чтобы развернуть)</span></summary>
                             <div class="destination-box">
                                 <code class="destination-code">{myDestination || 'Загрузка...'}</code>
                                 <button class="btn-icon-copy" on:click={() => {
@@ -162,27 +177,36 @@
                             <span class="info-value" style="color: {getStatusColor(networkStatus)}">{getStatusText(networkStatus)}</span>
                         </div>
 
-                        <h4 class="section-title">Настройки роутера</h4>
+                        <h4 class="section-title">Защита соединения (True E2EE)</h4>
                         <div class="settings-item-group">
                             <div class="setting-item">
-                                <label class="form-label">Режим анонимности (длина туннелей)</label>
+                                <label class="form-label">Протокол сквозного шифрования</label>
                                 <select bind:value={routerSettings.tunnelLength} class="input-field">
-                                    <option value={1}>Fast (1 хоп)</option>
-                                    <option value={2}>Normal (2 хопа)</option>
-                                    <option value={4}>Invisible (4 хопа)</option>
+                                    <option value={1}>ECDH X25519 + XChaCha20-Poly1305</option>
+                                    <option value={2}>Direct WebSocket Relay</option>
+                                    <option value={4}>Strict Contacts-Only Mode</option>
                                 </select>
                             </div>
                             <div class="setting-item flex-row bg-box">
                                 <div>
                                     <span class="label">Логирование в файл</span>
-                                    <p class="hint">Записывать логи роутера в i2pd.log</p>
+                                    <p class="hint">Локальная диагностика сокета</p>
                                 </div>
                                 <input type="checkbox" bind:checked={routerSettings.logToFile} />
                             </div>
                             <button class="btn-primary full-width" on:click={onSaveRouterSettings} style="margin-top: 10px;">💾 Сохранить и применить</button>
+        <div style="margin-top: 14px; padding: 14px; background: #1E1F22; border-radius: 20px;">
+            <button type="button" class="btn-primary" style="width: 100%; border-radius: 100px; background: #8AB4F8; color: #062E6F; font-weight: 700; padding: 12px; border: none; cursor: pointer;" on:click={verifyHydraConnection} disabled={isPingingServer}>
+                {isPingingServer ? '⏳ Проверка канала...' : '⚡ Проверить реальное соединение с сервером'}
+            </button>
+            {#if pingStatusText}
+                <div style="margin-top: 10px; font-size: 13px; color: #E3E3E3; line-height: 1.4;">{pingStatusText}</div>
+            {/if}
+        </div>
+        
                         </div>
 
-                        <h4 class="section-title">Экстренное подключение (Reseed)</h4>
+                        <h4 class="section-title">Проверка канала и узлов Hydra</h4>
                         <div class="settings-item-group">
                             <div class="setting-item flex-row bg-box">
                                 <div>
@@ -206,7 +230,7 @@
                             <div class="about-logo animate-float">
                                 <div class="icon-svg-lg">{@html Icons.Ghost}</div>
                             </div>
-                            <h2 class="about-title">TeleGhost</h2>
+                            <h2 class="about-title">Hydra</h2>
                             <p class="about-version">Version {aboutInfo.app_version || '1.0.2-beta'}</p>
                         </div>
 
@@ -215,7 +239,7 @@
                                 <div class="info-icon">{@html Icons.User}</div>
                                 <div class="info-content">
                                     <span class="info-label-fancy">Разработчик</span>
-                                    <span class="info-value-fancy">{aboutInfo.author || 'TeleGhost Team'}</span>
+                                    <span class="info-value-fancy">{aboutInfo.author || 'Hydra Team'}</span>
                                 </div>
                             </div>
 
@@ -259,7 +283,7 @@
                         </div>
 
                         <div class="about-footer">
-                            <p>© 2024-2026 TeleGhost Project. All rights reserved.</p>
+                            <p>© 2024-2026 Hydra Project. All rights reserved.</p>
                         </div>
                     </div>
                 {/if}

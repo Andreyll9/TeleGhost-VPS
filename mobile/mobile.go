@@ -1,4 +1,3 @@
-
 // Package mobile предоставляет HTTP-адаптер для запуска TeleGhost на Android.
 //
 // Архитектура:

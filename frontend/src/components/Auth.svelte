@@ -253,10 +253,10 @@
        style="max-width: {authScreen === 'profiles' ? '540px' : '440px'}; padding: 40px; border-radius: 28px;">
     
     <div class="login-logo" style="margin-bottom: 32px;">
-      <img src="/icon.png" alt="TeleGhost" class="rounded-full shadow-lg" style="width: 80px; height: 80px; filter: drop-shadow(0 0 20px rgba(99, 102, 241, 0.4)); object-fit: cover; border: 2px solid rgba(255,255,255,0.1);" />
+      <img src="/icon.png" alt="Hydra" class="rounded-full shadow-lg" style="width: 80px; height: 80px; filter: drop-shadow(0 0 20px rgba(99, 102, 241, 0.4)); object-fit: cover; border: 2px solid rgba(255,255,255,0.1);" />
     </div>
     
-    <h1 class="login-title" style="font-size: 32px; font-weight: 800; letter-spacing: -0.5px; margin-bottom: 8px; background: linear-gradient(to right, #fff, #a29bfe); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">TeleGhost</h1>
+    <h1 class="login-title" style="font-size: 32px; font-weight: 800; letter-spacing: -0.5px; margin-bottom: 8px; background: linear-gradient(to right, #fff, #a29bfe); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">Hydra</h1>
 
     {#if !profilesLoaded}
       <div style="padding: 60px 0; text-align: center;" out:fade>

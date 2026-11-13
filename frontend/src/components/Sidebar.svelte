@@ -234,7 +234,7 @@
         <div class="my-destination">
             <button class="btn-copy" on:click={onOpenMyQR}>
                 <div class="icon-svg-sm">{@html Icons.QrCode}</div>
-                <span>Мой I2P адрес</span>
+                <span>Мой ID ключ</span>
             </button>
         </div>
     </div>
@@ -248,7 +248,7 @@
             <button class="mobile-menu-btn" on:click={onToggleSettings} style="position: relative;">
                 <div class="icon-svg">{@html Icons.Menu}</div>
             </button>
-            <h1 class="mobile-title">TeleGhost</h1>
+            <h1 class="mobile-title">Hydra</h1>
             <div class="mobile-network-dot" style="background: {getStatusColor(networkStatus)}" title={getStatusText(networkStatus)}></div>
         </div>
         

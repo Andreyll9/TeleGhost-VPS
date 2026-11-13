@@ -956,7 +956,7 @@
                             settingsCategories={[
                                 {id: 'profile', name: 'Профиль', icon: Icons.User},
                                 {id: 'privacy', name: 'Приватность', icon: Icons.Lock},
-                                {id: 'network', name: 'I2P Сеть', icon: Icons.Globe},
+                                {id: 'network', name: 'Сеть и Сервер', icon: Icons.Globe},
                                 {id: 'about', name: 'О программе', icon: Icons.Info}
                             ]}
                             {activeSettingsTab} {settingsView} {selectedProfile} {networkStatus} {myDestination}
@@ -970,7 +970,7 @@
                             <div class="ghost-logo-wrapper">
                                 <div class="icon-svg-xl">{@html Icons.Ghost}</div>
                             </div>
-                            <h2>TeleGhost</h2>
+                            <h2>Hydra</h2>
                             <p>Выберите чат для начала общения</p>
                         </div>
                     </div>
@@ -993,7 +993,7 @@
                             settingsCategories={[
                                 {id: 'profile', name: 'Профиль', icon: Icons.User},
                                 {id: 'privacy', name: 'Приватность', icon: Icons.Lock},
-                                {id: 'network', name: 'I2P Сеть', icon: Icons.Globe},
+                                {id: 'network', name: 'Сеть и Сервер', icon: Icons.Globe},
                                 {id: 'about', name: 'О программе', icon: Icons.Info}
                             ]}
                             {activeSettingsTab} {settingsView} {selectedProfile} {networkStatus} {myDestination}
@@ -1015,7 +1015,7 @@
                             <div class="ghost-logo-wrapper">
                                 <div class="icon-svg-xl">{@html Icons.Ghost}</div>
                             </div>
-                            <h2>TeleGhost</h2>
+                            <h2>Hydra</h2>
                             <p>Выберите чат для начала общения</p>
                         </div>
                     {/if}
@@ -1283,4 +1283,31 @@
     /* Mobile layout specific fixes */
     .mobile-layout .sidebar { width: 100% !important; border-right: none; }
     .mobile-layout .content-area { width: 100%; height: 100%; }
+
+    :global(:root) {
+        --bg-primary: #121212 !important;
+        --bg-secondary: #1E1F22 !important;
+        --bg-tertiary: #28292D !important;
+        --accent: #8AB4F8 !important;
+        --text-primary: #E3E3E3 !important;
+        --text-secondary: #9AA0A6 !important;
+    }
+    :global(body), :global(.app-container), :global(.login-screen), :global(.content-area) {
+        background: #121212 !important;
+        color: #E3E3E3 !important;
+    }
+    :global(.sidebar), :global(.glass-panel), :global(.settings-card), :global(.modal-content) {
+        background: #1E1F22 !important;
+        backdrop-filter: none !important;
+        border: 1px solid rgba(255,255,255,0.05) !important;
+        border-radius: 24px !important;
+        box-shadow: none !important;
+    }
+    :global(.btn-primary), :global(.btn-primary-premium) {
+        background: #8AB4F8 !important;
+        color: #062E6F !important;
+        border-radius: 100px !important;
+        font-weight: 700 !important;
+        box-shadow: none !important;
+    }
 </style>

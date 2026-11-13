@@ -1,5 +1,5 @@
 /**
- * api_bridge.js — Универсальный API мост для TeleGhost.
+ * api_bridge.js — Универсальный API мост для Hydra.
  *
  * Desktop (Wails):  window.go.main.App.<Method>(args)
  * Mobile  (Android): POST http://127.0.0.1:8080/api/<method> { args: [...] }
