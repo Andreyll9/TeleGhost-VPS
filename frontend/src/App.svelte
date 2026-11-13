@@ -97,7 +97,28 @@
       isMobile = window.innerWidth < 768;
   }
 
-  onMount(async () => {
+  
+    // Перехват системных alert от http://127.0.0.1 и показ красивого тоста
+    if (typeof window !== 'undefined' && !window.__hydraAlertPatched) {
+        window.__hydraAlertPatched = true;
+        window.alert = (msg) => {
+            const text = String(msg || '').replace(/^Error:\s*/i, '');
+            if (typeof showToast === 'function') {
+                showToast(text, text.includes('✅') ? 'success' : 'error');
+            }
+        };
+        // Автоматический запрос ПИН-кода / отпечатка при каждом сворачивании приложения
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'hidden') {
+                const mustLock = localStorage.getItem('hydra_always_lock') !== '0';
+                if (mustLock && typeof isAuthenticated !== 'undefined' && isAuthenticated) {
+                    isAuthenticated = false;
+                }
+            }
+        });
+    }
+
+    onMount(async () => {
     updateIsMobile();
     window.addEventListener('resize', updateIsMobile);
     

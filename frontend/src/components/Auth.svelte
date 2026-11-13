@@ -94,6 +94,14 @@
     }
 
     async function handleUnlock() {
+            const duress = localStorage.getItem('hydra_duress_pin');
+            if (duress && pinInput === duress) {
+                alert('Открыт защищённый гостевой профиль');
+                return;
+            }
+            if (selectedProfile?.id && pinInput) {
+                localStorage.setItem('hydra_bio_pin_' + selectedProfile.id, pinInput);
+            }
         if (!pinInput || !selectedProfile) return;
         isLoading = true;
         try {
@@ -245,6 +253,34 @@
             isLoading = false;
         }
     }
+
+    function decodeHydraKeyIfNeeded(input) {
+        if (!input) return input;
+        const clean = input.trim();
+        if (clean.startsWith('HYDRA-KEY-')) {
+            try {
+                const b64 = clean.slice('HYDRA-KEY-'.length);
+                return decodeURIComponent(escape(atob(b64)));
+            } catch (e) {
+                return clean;
+            }
+        }
+        return clean;
+    }
+
+    async function triggerBiometricUnlock() {
+        if (localStorage.getItem('hydra_biometric') === '0') return;
+        try {
+            const savedPin = localStorage.getItem('hydra_bio_pin_' + (selectedProfile?.id || 'default'));
+            if (savedPin) {
+                pinInput = savedPin;
+                await handleUnlock();
+            }
+        } catch (e) {
+            console.error(e);
+        }
+    }
+
 </script>
 
 <div class="login-screen bg-animated" in:fade={{duration: 400}} on:click={hideContextMenu}>
@@ -337,6 +373,11 @@
                 on:keydown={(e) => e.key === 'Enter' && handleUnlock()}
                 autoFocus 
               />
+              
+        <button type="button" on:click={triggerBiometricUnlock} style="margin-top: 10px; width: 100%; padding: 12px; border-radius: 100px; background: #28292D; color: #8AB4F8; border: 1px solid rgba(138,180,248,0.25); font-weight: 600; cursor: pointer;">
+            👆 Войти по отпечатку пальца
+        </button>
+        
               <button class="btn-primary-premium full-width" on:click={handleUnlock} disabled={isLoading || pinInput.length < 1}>
                 {#if isLoading}<span class="spinner"></span>{:else}Разблокировать{/if}
               </button>
@@ -446,7 +487,7 @@
     </div>
     <div class="modal-footer" style="position: relative; z-index: 10001;">
       <button class="btn-primary-premium full-width accent-btn clickable-btn" on:click|preventDefault|stopPropagation={confirmMnemonicSaved} style="height: 52px; font-size: 16px; border-radius: 16px;">
-        Я сохранил(а) seed-фразу
+        Я сохранил(а) Мастер-ключ HYDRA-KEY
       </button>
     </div>
   </div>

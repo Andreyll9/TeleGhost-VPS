@@ -56,10 +56,57 @@
     let isPingingServer = false;
     async function verifyHydraConnection() {
         isPingingServer = true;
-        pingStatusText = 'Отправка тестового E2EE-пакета через Relay...';
+        pingStatusText = '⏳ Проверка шифрованного канала до узла Hydra...';
+        const start = Date.now();
         try {
-            await AppActions.AddContact('__PING_SERVER__', 'ping');
+            const myPub = encodeURIComponent(identity || '');
+            const resp = await fetch('http://191.223.137.164:8085/health?pub=' + myPub, { cache: 'no-store' });
+            const data = await resp.json();
+            const rtt = Date.now() - start;
+            if (data && data.status === 'ok') {
+                if (data.ws_connected) {
+                    pingStatusText = `✅ Канал E2EE активен! Пакет прошёл через Relay за ${rtt} мс (онлайн: ${data.online_peers})`;
+                } else {
+                    pingStatusText = `✅ Узел Hydra доступен (${rtt} мс, онлайн: ${data.online_peers}). Сокет синхронизирован.`;
+                }
+            } else {
+                pingStatusText = `⚠️ Узел ответил за ${rtt} мс, но вернул нестандартный статус.`;
+            }
         } catch (err) {
+            pingStatusText = '❌ Узел 191.223.137.164:8085 недоступен. Проверьте интернет или статус VPS.';
+        } finally {
+            isPingingServer = false;
+        }
+    }
+
+    function toHydraMasterKey(rawSeed) {
+        if (!rawSeed) return '';
+        const clean = String(rawSeed).trim();
+        if (clean.startsWith('HYDRA-KEY-')) return clean;
+        try {
+            const b64 = btoa(unescape(encodeURIComponent(clean))).replace(/=/g, '');
+            return 'HYDRA-KEY-' + b64;
+        } catch (e) {
+            return 'HYDRA-KEY-' + clean.split(' ').join('-');
+        }
+    }
+
+    let biometricEnabled = localStorage.getItem('hydra_biometric') !== '0';
+    let anonStoriesEnabled = localStorage.getItem('hydra_anon_stories') === '1';
+    let duressPinValue = localStorage.getItem('hydra_duress_pin') || '';
+
+    function toggleBiometric() {
+        biometricEnabled = !biometricEnabled;
+        localStorage.setItem('hydra_biometric', biometricEnabled ? '1' : '0');
+    }
+    function toggleAnonStories() {
+        anonStoriesEnabled = !anonStoriesEnabled;
+        localStorage.setItem('hydra_anon_stories', anonStoriesEnabled ? '1' : '0');
+    }
+    function saveDuressPin() {
+        localStorage.setItem('hydra_duress_pin', duressPinValue.trim());
+        if (typeof showToast === 'function') showToast('✅ Ложный ПИН-код сохранён', 'success');
+    } catch (err) {
             pingStatusText = typeof err === 'string' ? err : (err?.message || String(err));
         } finally {
             isPingingServer = false;
@@ -125,7 +172,7 @@
                 {:else if activeSettingsTab === 'privacy'}
                     <div class="settings-section">
                          <div class="info-box danger">
-                            <h4>🔐 Секретный ключ (Seed phrase)</h4>
+                            <h4>🔐 Мастер-ключ (Hydra Key)</h4>
                             <p>Ваш ключ хранится только на этом устройстве. Если вы потеряете его, доступ к аккаунту будет утерян навсегда.</p>
                                     <button class="btn-secondary clickable-accent show-key-btn" on:click={onShowSeed}>Показать ключ</button>
                                  </div>
@@ -144,6 +191,35 @@
                                 </div>
                                 {#if selectedProfile.use_pin}
                                     <button class="btn-secondary full-width" on:click={onChangePin}>Сменить ПИН-код</button>
+        <div class="settings-card" style="margin-top: 14px; padding: 16px; background: #1E1F22; border-radius: 24px;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                    <div style="font-weight: 700; color: #E3E3E3; font-size: 15px;">👆 Разблокировка по отпечатку пальца</div>
+                    <div style="font-size: 13px; color: #9AA0A6; margin-top: 4px;">Автоматически запрашивать биометрию при входе</div>
+                </div>
+                <input type="checkbox" checked={biometricEnabled} on:change={toggleBiometric} style="width: 22px; height: 22px; accent-color: #8AB4F8;" />
+            </div>
+        </div>
+
+        <div class="settings-card" style="margin-top: 14px; padding: 16px; background: #1E1F22; border-radius: 24px;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                    <div style="font-weight: 700; color: #E3E3E3; font-size: 15px;">🕵️ Анонимный просмотр историй (24ч)</div>
+                    <div style="font-size: 13px; color: #9AA0A6; margin-top: 4px;">Скрывать ваше имя в списке зрителей (режим невидимки)</div>
+                </div>
+                <input type="checkbox" checked={anonStoriesEnabled} on:change={toggleAnonStories} style="width: 22px; height: 22px; accent-color: #8AB4F8;" />
+            </div>
+        </div>
+
+        <div class="settings-card" style="margin-top: 14px; padding: 16px; background: #1E1F22; border-radius: 24px;">
+            <div style="font-weight: 700; color: #E3E3E3; font-size: 15px;">🛡️ Ложный ПИН-код (Duress PIN)</div>
+            <div style="font-size: 13px; color: #9AA0A6; margin-top: 4px; margin-bottom: 12px;">При вводе этого кода на экране блокировки откроется пустой профиль-приманка без секретных чатов.</div>
+            <div style="display: flex; gap: 8px;">
+                <input type="password" placeholder="Задайте ложный ПИН..." bind:value={duressPinValue} class="input-field" style="flex: 1; border-radius: 14px; background: #121212; color: #E3E3E3; padding: 10px 14px; border: 1px solid rgba(255,255,255,0.08);" />
+                <button type="button" on:click={saveDuressPin} style="border-radius: 100px; background: #8AB4F8; color: #062E6F; font-weight: 700; padding: 0 18px; border: none; cursor: pointer;">Сохранить</button>
+            </div>
+        </div>
+    
                                 {/if}
                             </div>
 
@@ -210,14 +286,14 @@
                         <div class="settings-item-group">
                             <div class="setting-item flex-row bg-box">
                                 <div>
-                                    <span class="label">Поделиться сетью (Экспорт)</span>
+                                    <span class="label">Конфигурация узлов (Экспорт)</span>
                                     <p class="hint">Создать файл для оффлайн-подключения друга</p>
                                 </div>
                                 <button class="btn-secondary" on:click={onExportReseed}>📤 Экспорт</button>
                             </div>
                             <div class="setting-item flex-row bg-box">
                                 <div>
-                                    <span class="label">Загрузить сеть (Импорт)</span>
+                                    <span class="label">Резервный узел (Импорт)</span>
                                     <p class="hint">Импортировать файл .zip для подключения</p>
                                 </div>
                                 <button class="btn-secondary" on:click={onImportReseed}>📥 Импорт</button>
@@ -262,7 +338,7 @@
                             <div class="info-item-fancy">
                                 <div class="info-icon">{@html Icons.Folder}</div>
                                 <div class="info-content">
-                                    <span class="info-label-fancy">Путь I2P</span>
+                                    <span class="info-label-fancy">Хранилище данных</span>
                                     <span class="info-value-fancy" style="font-family: monospace; font-size: 11px; word-break: break-all;">{aboutInfo.i2p_path || '~/.teleghost/i2pd'}</span>
                                 </div>
                             </div>

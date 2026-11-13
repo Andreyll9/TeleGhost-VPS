@@ -7,21 +7,23 @@ import (
 	"path/filepath"
 )
 
-// GetMyDestination возвращает I2P адрес.
+// GetMyDestination возвращает крипто-ключ Hydra.
 func (a *AppCore) GetMyDestination() string {
 	if a.Messenger == nil {
+		if a.Identity != nil && a.Identity.Keys != nil {
+			return a.Identity.Keys.PublicKeyBase64
+		}
 		return ""
 	}
 	return a.Messenger.GetDestination()
 }
 
-// GetRouterSettings возвращает настройки роутера.
+// GetRouterSettings возвращает настройки соединения.
 func (a *AppCore) GetRouterSettings() *RouterSettings {
 	settingsFile := filepath.Join(a.DataDir, "router_settings.json")
 
-	// Значения по умолчанию
 	defaultSettings := &RouterSettings{
-		TunnelLength: 1, // Fast mode by default as requested before
+		TunnelLength: 1,
 		LogToFile:    false,
 	}
 
@@ -39,13 +41,13 @@ func (a *AppCore) GetRouterSettings() *RouterSettings {
 	return &settings
 }
 
-// GetAppAboutInfo возвращает информацию о приложении.
+// GetAppAboutInfo возвращает информацию о приложении Hydra.
 func (a *AppCore) GetAppAboutInfo() *AppAboutInfo {
 	return &AppAboutInfo{
-		AppVersion: "1.0.2-beta",
-		I2PVersion: "2.58.0",
-		I2PPath:    filepath.Join(a.DataDir, "i2pd"),
-		Author:     "TeleGhost Team",
+		AppVersion: "2.0.0-hydra",
+		I2PVersion: "Hydra Relay v2 (X25519 + XChaCha20)",
+		I2PPath:    "Локальная зашифрованная БД (SQLite E2EE)",
+		Author:     "Andreyll9 (Hydra) | Core: TeleGhost (MIT)",
 		License:    "MIT / Open Source",
 	}
 }
