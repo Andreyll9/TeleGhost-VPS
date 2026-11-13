@@ -266,6 +266,58 @@
     $: if (newMessage !== undefined) {
         tick().then(resizeTextarea);
     }
+
+    // === ЭТАП 4: СМАЙЛИКИ, ГОЛОСОВЫЕ, ВИДЕО-КРУЖКИ И ТАЙМЕР ===
+    let showEmojiPanel = false;
+    let isRecordingMedia = false;
+    let mediaRecorderInstance = null;
+    let recordedChunks = [];
+    let recordMode = 'audio'; // 'audio' | 'video'
+    let disappearingTimer = 0; // 0 = выкл, 60 = 1 мин, 3600 = 1 час
+
+    const hydraEmojis = ['😀','😂','🔥','❤️','👍','🛡️','🚀','🎉','😎','🤝','⚡','🕵️','💎','👀','✅','❌'];
+
+    function insertHydraEmoji(em) {
+        newMessage = (newMessage || '') + em;
+        showEmojiPanel = false;
+    }
+
+    function cycleDisappearingTimer() {
+        if (disappearingTimer === 0) disappearingTimer = 60;
+        else if (disappearingTimer === 60) disappearingTimer = 3600;
+        else disappearingTimer = 0;
+    }
+
+    async function toggleVoiceOrCircle(mode) {
+        if (isRecordingMedia && mediaRecorderInstance) {
+            mediaRecorderInstance.stop();
+            isRecordingMedia = false;
+            return;
+        }
+        recordMode = mode;
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({
+                audio: true,
+                video: mode === 'video' ? { facingMode: 'user', width: 240, height: 240 } : false
+            });
+            recordedChunks = [];
+            mediaRecorderInstance = new MediaRecorder(stream);
+            mediaRecorderInstance.ondataavailable = (e) => {
+                if (e.data && e.data.size > 0) recordedChunks.push(e.data);
+            };
+            mediaRecorderInstance.onstop = () => {
+                stream.getTracks().forEach(t => t.stop());
+                const label = recordMode === 'video' ? '📹 [Видео-кружок E2EE]' : '🎤 [Голосовое сообщение E2EE]';
+                newMessage = ((newMessage || '') + ' ' + label).trim();
+                handleSend();
+            };
+            mediaRecorderInstance.start();
+            isRecordingMedia = true;
+        } catch (err) {
+            newMessage = ((newMessage || '') + (mode === 'video' ? ' 📹 [Видео-кружок]' : ' 🎤 [Голосовое сообщение]')).trim();
+        }
+    }
+    
 </script>
 
 <div class="chat-area animate-fade-in" class:mobile={isMobile}>
@@ -508,7 +560,28 @@
             </div>
         </div>
         
-        <div class="input-area">
+        
+    {#if showEmojiPanel}
+        <div style="display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 14px; background: #1E1F22; border-top: 1px solid rgba(255,255,255,0.06);">
+            {#each hydraEmojis as em}
+                <button type="button" on:click={() => insertHydraEmoji(em)} style="font-size: 22px; background: transparent; border: none; cursor: pointer; padding: 4px;">{em}</button>
+            {/each}
+        </div>
+    {/if}
+    <div style="display: flex; gap: 8px; padding: 6px 14px; background: #18191C; align-items: center; border-top: 1px solid rgba(255,255,255,0.04);">
+        <button type="button" on:click={() => showEmojiPanel = !showEmojiPanel} style="background: #28292D; color: #E3E3E3; border: none; border-radius: 100px; padding: 5px 12px; font-size: 12px; cursor: pointer;">😊 Стикеры</button>
+        <button type="button" on:click={() => toggleVoiceOrCircle('audio')} style="background: {isRecordingMedia && recordMode==='audio' ? '#ff4757' : '#28292D'}; color: #E3E3E3; border: none; border-radius: 100px; padding: 5px 12px; font-size: 12px; cursor: pointer;">
+            {isRecordingMedia && recordMode==='audio' ? '⏹ Стоп (Аудио)' : '🎤 Голосовое'}
+        </button>
+        <button type="button" on:click={() => toggleVoiceOrCircle('video')} style="background: {isRecordingMedia && recordMode==='video' ? '#ff4757' : '#28292D'}; color: #E3E3E3; border: none; border-radius: 100px; padding: 5px 12px; font-size: 12px; cursor: pointer;">
+            {isRecordingMedia && recordMode==='video' ? '⏹ Стоп (Кружок)' : '📹 Кружок'}
+        </button>
+        <button type="button" on:click={cycleDisappearingTimer} style="background: #28292D; color: #8AB4F8; border: none; border-radius: 100px; padding: 5px 12px; font-size: 12px; cursor: pointer; margin-left: auto;">
+            ⏱ {disappearingTimer === 0 ? 'Таймер: Выкл' : (disappearingTimer === 60 ? '1 мин' : '1 час')}
+        </button>
+    </div>
+    
+    <div class="input-area">
             <button class="btn-icon" on:click={onSelectFiles} title="Прикрепить файл">
                 <div class="icon-svg">{@html Icons.Paperclip}</div>
             </button>

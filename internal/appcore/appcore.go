@@ -661,7 +661,17 @@ func (a *AppCore) ConnectToI2P() {
 		a.SetNetworkStatus(StatusError)
 		return
 	}
-	a.SetNetworkStatus(StatusOnline)
+	go func() {
+		for {
+			select {
+			case <-a.Ctx.Done():
+				return
+			default:
+				_ = a.GetAppAboutInfo()
+				time.Sleep(10 * time.Second)
+			}
+		}
+	}()
 }
 
 // formatAvatarURL преобразует локальный путь в URL для фронтенда для текущего пользователя

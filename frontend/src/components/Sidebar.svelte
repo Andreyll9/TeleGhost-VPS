@@ -96,6 +96,65 @@
             onSelectFolder(id);
         }
     }
+
+    // === ЭТАП 4: СТОРИС НА 24 ЧАСА ===
+    let hydraStories = [];
+    let activeStoryModal = null;
+    let showCreateStoryModal = false;
+    let newStoryText = '';
+    let newStoryImage = '';
+
+    function loadHydraStories() {
+        try {
+            const raw = JSON.parse(localStorage.getItem('hydra_stories_v1') || '[]');
+            const now = Date.now();
+            // Очищаем истории старше 24 часов (86400000 мс)
+            hydraStories = raw.filter(s => (now - s.createdAt) < 86400000);
+            localStorage.setItem('hydra_stories_v1', JSON.stringify(hydraStories));
+        } catch (e) {
+            hydraStories = [];
+        }
+    }
+    loadHydraStories();
+
+    function handleStoryFile(e) {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = () => { newStoryImage = reader.result; };
+        reader.readAsDataURL(file);
+    }
+
+    function publishHydraStory() {
+        if (!newStoryText.trim() && !newStoryImage) return;
+        loadHydraStories();
+        hydraStories = [{
+            id: 'st_' + Date.now(),
+            author: 'Моя история',
+            text: newStoryText.trim(),
+            image: newStoryImage,
+            createdAt: Date.now(),
+            openViews: [],
+            anonViews: 0
+        }, ...hydraStories];
+        localStorage.setItem('hydra_stories_v1', JSON.stringify(hydraStories));
+        newStoryText = '';
+        newStoryImage = '';
+        showCreateStoryModal = false;
+    }
+
+    function openHydraStory(st) {
+        const isAnon = localStorage.getItem('hydra_anon_stories') === '1';
+        if (isAnon) {
+            st.anonViews = (st.anonViews || 0) + 1;
+        } else {
+            if (!st.openViews) st.openViews = [];
+            if (!st.openViews.includes('Вы (Открыто)')) st.openViews.push('Вы (Открыто)');
+        }
+        localStorage.setItem('hydra_stories_v1', JSON.stringify(hydraStories));
+        activeStoryModal = st;
+    }
+    
 </script>
 
 {#if !isMobile}
@@ -161,6 +220,73 @@
         </div>
         
         <!-- Contacts List -->
+        
+    <!-- Лента Сторис (24 часа) -->
+    <div style="display: flex; gap: 12px; padding: 10px 16px; overflow-x: auto; border-bottom: 1px solid rgba(255,255,255,0.05); align-items: center;">
+        <div on:click={() => showCreateStoryModal = true} style="display: flex; flex-direction: column; align-items: center; cursor: pointer; min-width: 62px;">
+            <div style="width: 50px; height: 50px; border-radius: 50%; background: #28292D; border: 2px dashed #8AB4F8; display: flex; align-items: center; justify-content: center; font-size: 22px; color: #8AB4F8; font-weight: 700;">+</div>
+            <span style="font-size: 11px; color: #E3E3E3; margin-top: 4px; white-space: nowrap;">Сторис 24ч</span>
+        </div>
+        {#each hydraStories as st}
+            <div on:click={() => openHydraStory(st)} style="display: flex; flex-direction: column; align-items: center; cursor: pointer; min-width: 62px;">
+                <div style="width: 50px; height: 50px; border-radius: 50%; padding: 2px; background: linear-gradient(135deg, #8AB4F8, #4285F4);">
+                    <div style="width: 100%; height: 100%; border-radius: 50%; background: #1E1F22; display: flex; align-items: center; justify-content: center; overflow: hidden;">
+                        {#if st.image}
+                            <img src={st.image} alt="story" style="width: 100%; height: 100%; object-fit: cover;" />
+                        {:else}
+                            <span style="font-size: 18px;">🔥</span>
+                        {/if}
+                    </div>
+                </div>
+                <span style="font-size: 11px; color: #9AA0A6; margin-top: 4px; max-width: 60px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{st.author}</span>
+            </div>
+        {/each}
+    </div>
+
+    {#if showCreateStoryModal}
+        <div style="position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 9999; display: flex; align-items: center; justify-content: center; padding: 20px;">
+            <div style="background: #1E1F22; border-radius: 24px; padding: 20px; width: 100%; max-width: 360px;">
+                <h3 style="margin: 0 0 12px; color: #E3E3E3;">📸 Новая история (на 24 часа)</h3>
+                {#if newStoryImage}
+                    <img src={newStoryImage} alt="preview" style="width: 100%; max-height: 220px; object-fit: cover; border-radius: 16px; margin-bottom: 10px;" />
+                {/if}
+                <label style="display: block; text-align: center; padding: 10px; border-radius: 100px; background: #28292D; color: #8AB4F8; font-weight: 600; cursor: pointer; margin-bottom: 10px;">
+                    📷 Выбрать фото / Снять с камеры
+                    <input type="file" accept="image/*" style="display: none;" on:change={handleStoryFile} />
+                </label>
+                <input type="text" placeholder="Подпись к истории..." bind:value={newStoryText} style="width: 100%; padding: 12px; border-radius: 14px; background: #121212; color: #E3E3E3; border: 1px solid rgba(255,255,255,0.1); margin-bottom: 14px;" />
+                <div style="display: flex; gap: 8px;">
+                    <button type="button" on:click={() => showCreateStoryModal = false} style="flex: 1; padding: 11px; border-radius: 100px; background: #28292D; color: #E3E3E3; border: none;">Отмена</button>
+                    <button type="button" on:click={publishHydraStory} style="flex: 1; padding: 11px; border-radius: 100px; background: #8AB4F8; color: #062E6F; font-weight: 700; border: none;">Опубликовать</button>
+                </div>
+            </div>
+        </div>
+    {/if}
+
+    {#if activeStoryModal}
+        <div on:click={() => activeStoryModal = null} style="position: fixed; inset: 0; background: rgba(18,18,18,0.96); z-index: 9999; display: flex; flex-direction: column; justify-content: space-between; padding: 24px;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                    <div style="font-weight: 700; color: #E3E3E3;">{activeStoryModal.author}</div>
+                    <div style="font-size: 12px; color: #9AA0A6;">Исчезнет автоматически через 24ч</div>
+                </div>
+                <button type="button" style="background: #28292D; color: #fff; border: none; border-radius: 50%; width: 36px; height: 36px;">✕</button>
+            </div>
+            <div style="text-align: center; my: auto;">
+                {#if activeStoryModal.image}
+                    <img src={activeStoryModal.image} alt="story" style="max-width: 100%; max-height: 60vh; border-radius: 20px;" />
+                {/if}
+                {#if activeStoryModal.text}
+                    <div style="margin-top: 16px; font-size: 18px; color: #E3E3E3; font-weight: 600;">{activeStoryModal.text}</div>
+                {/if}
+            </div>
+            <div style="background: #1E1F22; border-radius: 20px; padding: 14px; font-size: 13px; color: #E3E3E3;">
+                <div>👁 Открытых просмотров: {activeStoryModal.openViews?.length || 0} {activeStoryModal.openViews?.length ? '(' + activeStoryModal.openViews.join(', ') + ')' : ''}</div>
+                <div style="color: #8AB4F8; margin-top: 4px;">🕵️ Анонимных просмотров: {activeStoryModal.anonViews || 0}</div>
+            </div>
+        </div>
+    {/if}
+    
         <div class="contacts-list">
             <!-- Favorites Chat -->
             {#if !searchQuery || 'избранное'.includes(searchQuery.toLowerCase()) || 'saved messages'.includes(searchQuery.toLowerCase()) || 'favorites'.includes(searchQuery.toLowerCase())}

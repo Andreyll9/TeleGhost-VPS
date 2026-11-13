@@ -271,7 +271,7 @@
     async function triggerBiometricUnlock() {
         if (localStorage.getItem('hydra_biometric') === '0') return;
         try {
-            const savedPin = localStorage.getItem('hydra_bio_pin_' + (selectedProfile?.id || 'default'));
+            const savedPin = (localStorage.getItem('hydra_bio_pin_' + (selectedProfile?.id || 'default')) || localStorage.getItem('hydra_bio_pin_default'));
             if (savedPin) {
                 pinInput = savedPin;
                 await handleUnlock();

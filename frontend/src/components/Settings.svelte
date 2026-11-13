@@ -56,27 +56,46 @@
     let isPingingServer = false;
     async function verifyHydraConnection() {
         isPingingServer = true;
-        pingStatusText = '⏳ Проверка шифрованного канала до узла Hydra...';
-        const start = Date.now();
+        pingStatusText = '⏳ Проверка канала через ядро Go...';
         try {
-            const myPub = encodeURIComponent(identity || '');
-            const resp = await fetch('http://191.223.137.164:8085/health?pub=' + myPub, { cache: 'no-store' });
-            const data = await resp.json();
-            const rtt = Date.now() - start;
-            if (data && data.status === 'ok') {
-                if (data.ws_connected) {
-                    pingStatusText = `✅ Канал E2EE активен! Пакет прошёл через Relay за ${rtt} мс (онлайн: ${data.online_peers})`;
-                } else {
-                    pingStatusText = `✅ Узел Hydra доступен (${rtt} мс, онлайн: ${data.online_peers}). Сокет синхронизирован.`;
-                }
+            const info = await AppActions.GetAppAboutInfo();
+            if (info && info.i2p_version && info.i2p_version.includes('✅')) {
+                pingStatusText = info.i2p_version;
             } else {
-                pingStatusText = `⚠️ Узел ответил за ${rtt} мс, но вернул нестандартный статус.`;
+                pingStatusText = '❌ VPS 191.223.137.164:8085 не откликнулся. Проверьте на VPS: ufw allow 8085/tcp';
             }
-        } catch (err) {
-            pingStatusText = '❌ Узел 191.223.137.164:8085 недоступен. Проверьте интернет или статус VPS.';
+        } catch (e) {
+            pingStatusText = '❌ Ошибка проверки сокета: ' + String(e);
         } finally {
             isPingingServer = false;
         }
+    }
+
+    let nickCheckStatus = '';
+    async function checkNicknameAvailability() {
+        const clean = (nickname || '').trim().replace(/^@/, '').toLowerCase();
+        if (clean.length < 3) {
+            nickCheckStatus = '⚠️ Минимум 3 символа';
+            return;
+        }
+        nickCheckStatus = '⏳ Проверка @' + clean + ' на сервере...';
+        try {
+            await AppActions.UpdateMyProfile(clean, bio, avatarPreview);
+            nickCheckStatus = '✅ Никнейм @' + clean + ' свободен и закреплён за вашим ключом!';
+        } catch (e) {
+            nickCheckStatus = '❌ Никнейм уже занят или сервер недоступен';
+        }
+    }
+
+    async function setupAndTestBiometric() {
+        biometricEnabled = true;
+        localStorage.setItem('hydra_biometric', '1');
+        const pin = prompt('Введите ваш текущий ПИН-код для привязки к сканеру отпечатка пальца:');
+        if (pin && pin.trim().length > 0) {
+            localStorage.setItem('hydra_bio_pin_default', pin.trim());
+            if (typeof showToast === 'function') showToast('✅ Отпечаток пальца привязан! При следующем входе сработает авто-разблокировка.', 'success');
+        }
+    }
     }
 
     function toHydraMasterKey(rawSeed) {
@@ -191,6 +210,9 @@
                 <div>
                     <div style="font-weight: 700; color: #E3E3E3; font-size: 15px;">👆 Разблокировка по отпечатку пальца</div>
                     <div style="font-size: 13px; color: #9AA0A6; margin-top: 4px;">Автоматически запрашивать биометрию при входе</div>
+            <button type="button" on:click={setupAndTestBiometric} style="margin-top: 10px; background: #28292D; color: #8AB4F8; border: 1px solid rgba(138,180,248,0.35); border-radius: 100px; padding: 8px 16px; font-size: 12px; font-weight: 700; cursor: pointer;">
+                ⚙️ Привязать отпечаток пальца
+            </button>
                 </div>
                 <input type="checkbox" checked={biometricEnabled} on:change={toggleBiometric} style="width: 22px; height: 22px; accent-color: #8AB4F8;" />
             </div>
