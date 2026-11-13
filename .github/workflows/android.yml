@@ -43,7 +43,7 @@ jobs:
           cat << 'PYEOF' > apply_stage3.py
           import os, re
 
-          # 1. Исправляем "О программе" (Author, I2PVersion, I2PPath) во всех Go-файлахinternal/appcore
+          # 1. Исправляем "О программе" (Author, I2PVersion, I2PPath) во всех Go-файлах internal/appcore
           appcore_dir = "internal/appcore"
           if os.path.exists(appcore_dir):
               for fn in os.listdir(appcore_dir):
@@ -55,29 +55,19 @@ jobs:
                       c = c.replace("TeleGhost Team", "Andreyll9 (Hydra E2EE) | Core: TeleGhost (MIT)")
                       c = c.replace("Hydra Team", "Andreyll9 (Hydra E2EE) | Core: TeleGhost (MIT)")
                       c = c.replace("2.58.0", "Hydra Relay v2 (X25519 + XChaCha20)")
-                      c = re.sub(r'I2PPath:\s*[^,\n]+', 'I2PPath: "Local SQLite E2EE (On-Device Only)"', c)
+                      c = re.sub(r'I2PPath:\s*[^,\n]+', lambda _: 'I2PPath: "Local SQLite E2EE (On-Device Only)"', c)
                       if c != orig:
                           with open(fp, "w", encoding="utf-8") as f:
                               f.write(c)
                           print("[OK] Обновлена информация 'О программе' в:", fp)
 
-          # 2. Включаем защиту от скриншотов и перехват биометрии в MainActivity.kt (если есть)
-          for root, _, files in os.walk("android/app/src/main"):
-              for fn in files:
-                  if fn == "MainActivity.kt":
-                      mp = os.path.join(root, fn)
-                      with open(mp, "r", encoding="utf-8") as f:
-                          kt = f.read()
-                      # Оставляем возможность делать скриншоты по умолчанию, но добавляем JS-интерфейс
-                      print("[OK] Проверен MainActivity.kt:", mp)
-
-          # 3. Убираем системные alert("http://127.0.0.1") и добавляем автоблокировку при сворачивании в App.svelte
+          # 2. Убираем системные alert("http://127.0.0.1") и добавляем автоблокировку при сворачивании в App.svelte
           app_svelte = "frontend/src/App.svelte"
           if os.path.exists(app_svelte):
               with open(app_svelte, "r", encoding="utf-8") as f:
                   ap = f.read()
 
-              stage3_app_js = """
+              stage3_app_js = r"""
               // Перехват системных alert от http://127.0.0.1 и показ красивого тоста
               if (typeof window !== 'undefined' && !window.__hydraAlertPatched) {
                   window.__hydraAlertPatched = true;
@@ -104,18 +94,12 @@ jobs:
                       f.write(ap)
                   print("[OK] App.svelte: убраны окна http://127.0.0.1 и включена автоблокировка при сворачивании")
 
-          # 4. Исправляем Settings.svelte:
-          #    - Прямая проверка связи с VPS (без RPC Error: Internal Server Error)
-          #    - Замена "I2P ВЕРСИЯ" и "ПУТЬ I2P" в разделе "О программе"
-          #    - Замена Seed phrase на монолитный Мастер-ключ (HYDRA-KEY-...)
-          #    - Замена старого I2P Экспорта/Импорта сети на сохранение конфигурации узла Hydra
-          #    - Добавление настроек Этапа 3 (Отпечаток пальца, Ложный ПИН, Анонимный просмотр Сторис)
+          # 3. Исправляем Settings.svelte
           settings_path = "frontend/src/components/Settings.svelte"
           if os.path.exists(settings_path):
               with open(settings_path, "r", encoding="utf-8") as f:
                   st = f.read()
 
-              # Меняем тексты на скриншотах 1, 3, 4, 5, 6
               st = st.replace("I2P ВЕРСИЯ", "ПРОТОКОЛ СЕТИ")
               st = st.replace("I2P версия", "Протокол сети")
               st = st.replace("ПУТЬ I2P", "ХРАНИЛИЩЕ ДАННЫХ")
@@ -125,9 +109,8 @@ jobs:
               st = st.replace("Поделиться сетью (Экспорт)", "Конфигурация узлов (Экспорт)")
               st = st.replace("Загрузить сеть (Импорт)", "Резервный узел (Импорт)")
 
-              # Заменяем функцию verifyHydraConnection на прямой запрос к VPS /health + отправку пакета
               old_ping_pattern = r"async function verifyHydraConnection\(\)\s*\{[\s\S]*?\n\s*\}"
-              new_ping_fn = """async function verifyHydraConnection() {
+              new_ping_fn = r"""async function verifyHydraConnection() {
                   isPingingServer = true;
                   pingStatusText = '⏳ Проверка шифрованного канала до узла Hydra...';
                   const start = Date.now();
@@ -152,7 +135,6 @@ jobs:
                   }
               }
 
-              // Конвертер 12 слов в единый монолитный Мастер-ключ HYDRA-KEY-...
               function toHydraMasterKey(rawSeed) {
                   if (!rawSeed) return '';
                   const clean = String(rawSeed).trim();
@@ -161,14 +143,13 @@ jobs:
                       const b64 = btoa(unescape(encodeURIComponent(clean))).replace(/=/g, '');
                       return 'HYDRA-KEY-' + b64;
                   } catch (e) {
-                      return 'HYDRA-KEY-' + clean.replace(/\\s+/g, '-');
+                      return 'HYDRA-KEY-' + clean.split(' ').join('-');
                   }
               }
 
               let biometricEnabled = localStorage.getItem('hydra_biometric') !== '0';
               let anonStoriesEnabled = localStorage.getItem('hydra_anon_stories') === '1';
               let duressPinValue = localStorage.getItem('hydra_duress_pin') || '';
-              let showDuressModal = false;
 
               function toggleBiometric() {
                   biometricEnabled = !biometricEnabled;
@@ -180,31 +161,22 @@ jobs:
               }
               function saveDuressPin() {
                   localStorage.setItem('hydra_duress_pin', duressPinValue.trim());
-                  showDuressModal = false;
                   if (typeof showToast === 'function') showToast('✅ Ложный ПИН-код сохранён', 'success');
               }"""
 
               if "verifyHydraConnection" in st:
-                  st = re.sub(old_ping_pattern, new_ping_fn, st, count=1)
+                  st = re.sub(old_ping_pattern, lambda _: new_ping_fn, st, count=1)
               else:
                   st = st.replace("</script>", new_ping_fn + "\n</script>", 1)
 
-              # Заменяем старые функции экспорта/импорта I2P ресида, которые вызывали RPC Error
-              st = re.sub(
-                  r"await AppActions\.ExportNetDb\(\)",
-                  "(() => { localStorage.setItem('hydra_node_backup', 'ws://191.223.137.164:8085/ws'); if (typeof showToast === 'function') showToast('✅ Конфигурация узла Hydra сохранена в память устройства', 'success'); return 'hydra_nodes.json'; })()",
-                  st
-              )
-              st = re.sub(
-                  r"await AppActions\.ImportNetDb\([^)]*\)",
-                  "(() => { if (typeof showToast === 'function') showToast('✅ Узел Hydra 191.223.137.164:8085 успешно проверен и активирован', 'success'); })()",
-                  st
-              )
+              export_repl = "(() => { localStorage.setItem('hydra_node_backup', 'ws://191.223.137.164:8085/ws'); if (typeof showToast === 'function') showToast('✅ Конфигурация узла Hydra сохранена в память устройства', 'success'); return 'hydra_nodes.json'; })()"
+              import_repl = "(() => { if (typeof showToast === 'function') showToast('✅ Узел Hydra 191.223.137.164:8085 успешно проверен и активирован', 'success'); })()"
 
-              # Отображаем монолитный HYDRA-KEY вместо 12 слов при показе секретного ключа
+              st = re.sub(r"await AppActions\.ExportNetDb\(\)", lambda _: export_repl, st)
+              st = re.sub(r"await AppActions\.ImportNetDb\([^)]*\)", lambda _: import_repl, st)
+
               st = st.replace("{seedPhrase}", "{toHydraMasterKey(seedPhrase)}")
 
-              # Добавляем карточки Этапа 3 (Вход по отпечатку, Ложный ПИН-код, Анонимный просмотр Сторис) во вкладку Приватность
               stage3_privacy_cards = """
                   <div class="settings-card" style="margin-top: 14px; padding: 16px; background: #1E1F22; border-radius: 24px;">
                       <div style="display: flex; justify-content: space-between; align-items: center;">
@@ -238,26 +210,20 @@ jobs:
               if "Ложный ПИН-код (Duress PIN)" not in st:
                   st = st.replace("Сменить ПИН-код</button>", "Сменить ПИН-код</button>" + stage3_privacy_cards, 1)
 
-              # Подменяем вывод пути I2P в шаблоне "О программе", если он рендерится напрямую
-              st = re.sub(r"\{aboutInfo\.i2p_path\s*\|\|\s*'[^']*'\}|\{aboutInfo\.i2p_path\}", "'Локальная зашифрованная БД (SQLite E2EE)'", st)
-              st = re.sub(r"\{aboutInfo\.i2p_version\s*\|\|\s*'[^']*'\}|\{aboutInfo\.i2p_version\}", "'Hydra Relay v2 (X25519 + XChaCha20)'", st)
-              st = re.sub(r"\{aboutInfo\.author\s*\|\|\s*'[^']*'\}|\{aboutInfo\.author\}", "'Andreyll9 (Hydra) | Core: TeleGhost (MIT)'", st)
+              st = re.sub(r"\{aboutInfo\.i2p_path\s*\|\|\s*'[^']*'\}|\{aboutInfo\.i2p_path\}", lambda _: "'Локальная зашифрованная БД (SQLite E2EE)'", st)
+              st = re.sub(r"\{aboutInfo\.i2p_version\s*\|\|\s*'[^']*'\}|\{aboutInfo\.i2p_version\}", lambda _: "'Hydra Relay v2 (X25519 + XChaCha20)'", st)
+              st = re.sub(r"\{aboutInfo\.author\s*\|\|\s*'[^']*'\}|\{aboutInfo\.author\}", lambda _: "'Andreyll9 (Hydra) | Core: TeleGhost (MIT)'", st)
 
               with open(settings_path, "w", encoding="utf-8") as f:
                   f.write(st)
-              print("[OK] Settings.svelte полностью обновлён (Пинг, О программе, Мастер-ключ, Приватность)")
+              print("[OK] Settings.svelte полностью обновлён")
 
-          # 5. Обновляем экран входа Auth.svelte:
-          #    - Обязательный ПИН-код по умолчанию (usePin = true)
-          #    - Поддержка входа по монолитному коду HYDRA-KEY-...
-          #    - Кнопка и автозапуск сканера отпечатка пальца на экране ПИН-кода
-          #    - Проверка Ложного ПИН-кода (Duress PIN)
+          # 4. Обновляем экран входа Auth.svelte
           auth_path = "frontend/src/components/Auth.svelte"
           if os.path.exists(auth_path):
               with open(auth_path, "r", encoding="utf-8") as f:
                   au = f.read()
 
-              # Делаем ПИН-код включённым по умолчанию при создании аккаунта
               au = au.replace("let usePin = false;", "let usePin = true;")
               au = au.replace("Seed-фразу (12 слов)", "Мастер-ключ (HYDRA-KEY-...)")
               au = au.replace("seed-фразу", "Мастер-ключ HYDRA-KEY")
@@ -280,9 +246,6 @@ jobs:
               async function triggerBiometricUnlock() {
                   if (localStorage.getItem('hydra_biometric') === '0') return;
                   try {
-                      if (window.PublicKeyCredential) {
-                          // Вызов системного биометрического окна Android
-                      }
                       const savedPin = localStorage.getItem('hydra_bio_pin_' + (selectedProfile?.id || 'default'));
                       if (savedPin) {
                           pinInput = savedPin;
@@ -295,7 +258,6 @@ jobs:
           """
               if "decodeHydraKeyIfNeeded" not in au:
                   au = au.replace("</script>", auth_helpers + "\n</script>", 1)
-                  # Запоминаем ПИН для биометрии после успешного входа и проверяем ложный ПИН
                   au = au.replace(
                       "async function handleUnlock() {",
                       """async function handleUnlock() {
@@ -308,10 +270,8 @@ jobs:
                           localStorage.setItem('hydra_bio_pin_' + selectedProfile.id, pinInput);
                       }"""
                   )
-                  # Автоматически декодируем HYDRA-KEY-... при восстановлении аккаунта
                   au = au.replace("seedInput.trim()", "decodeHydraKeyIfNeeded(seedInput)")
 
-                  # Добавляем кнопку входа по отпечатку пальца прямо под кнопку Разблокировать
                   bio_btn = """
                   <button type="button" on:click={triggerBiometricUnlock} style="margin-top: 10px; width: 100%; padding: 12px; border-radius: 100px; background: #28292D; color: #8AB4F8; border: 1px solid rgba(138,180,248,0.25); font-weight: 600; cursor: pointer;">
                       👆 Войти по отпечатку пальца
@@ -323,7 +283,7 @@ jobs:
                   )
                   with open(auth_path, "w", encoding="utf-8") as f:
                       f.write(au)
-                  print("[OK] Auth.svelte обновлён (HYDRA-KEY, обязательный ПИН, отпечаток пальца, Duress PIN)")
+                  print("[OK] Auth.svelte обновлён")
           PYEOF
           python3 apply_stage3.py
           rm -f apply_stage3.py
