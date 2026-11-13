@@ -94,10 +94,8 @@
         if (pin && pin.trim().length > 0) {
             localStorage.setItem('hydra_bio_pin_default', pin.trim());
             if (typeof showToast === 'function') showToast('✅ Отпечаток пальца привязан! При следующем входе сработает авто-разблокировка.', 'success');
-        }
+            }
     }
-    }
-
     function toHydraMasterKey(rawSeed) {
         if (!rawSeed) return '';
         const clean = String(rawSeed).trim();
