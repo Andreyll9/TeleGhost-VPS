@@ -43,23 +43,92 @@ jobs:
           cat << 'PYEOF' > apply_stage3.py
           import os, re
 
-          # 1. Исправляем "О программе" (Author, I2PVersion, I2PPath) во всех Go-файлах internal/appcore
-          appcore_dir = "internal/appcore"
-          if os.path.exists(appcore_dir):
-              for fn in os.listdir(appcore_dir):
-                  if fn.endswith(".go"):
-                      fp = os.path.join(appcore_dir, fn)
-                      with open(fp, "r", encoding="utf-8") as f:
-                          c = f.read()
-                      orig = c
-                      c = c.replace("TeleGhost Team", "Andreyll9 (Hydra E2EE) | Core: TeleGhost (MIT)")
-                      c = c.replace("Hydra Team", "Andreyll9 (Hydra E2EE) | Core: TeleGhost (MIT)")
-                      c = c.replace("2.58.0", "Hydra Relay v2 (X25519 + XChaCha20)")
-                      c = re.sub(r'I2PPath:\s*[^,\n]+', lambda _: 'I2PPath: "Local SQLite E2EE (On-Device Only)"', c)
-                      if c != orig:
-                          with open(fp, "w", encoding="utf-8") as f:
-                              f.write(c)
-                          print("[OK] Обновлена информация 'О программе' в:", fp)
+          # 1. Чисто перезаписываем internal/appcore/settings.go (без регулярок, ломающих filepath.Join)
+          settings_go_path = "internal/appcore/settings.go"
+          if os.path.exists(settings_go_path):
+              clean_settings_go = """package appcore
+
+          import (
+          	"encoding/json"
+          	"log"
+          	"os"
+          	"path/filepath"
+          )
+
+          // GetMyDestination возвращает крипто-ключ Hydra.
+          func (a *AppCore) GetMyDestination() string {
+          	if a.Messenger == nil {
+          		if a.Identity != nil && a.Identity.Keys != nil {
+          			return a.Identity.Keys.PublicKeyBase64
+          		}
+          		return ""
+          	}
+          	return a.Messenger.GetDestination()
+          }
+
+          // GetRouterSettings возвращает настройки соединения.
+          func (a *AppCore) GetRouterSettings() *RouterSettings {
+          	settingsFile := filepath.Join(a.DataDir, "router_settings.json")
+
+          	defaultSettings := &RouterSettings{
+          		TunnelLength: 1,
+          		LogToFile:    false,
+          	}
+
+          	data, err := os.ReadFile(settingsFile)
+          	if err != nil {
+          		return defaultSettings
+          	}
+
+          	var settings RouterSettings
+          	if err := json.Unmarshal(data, &settings); err != nil {
+          		log.Printf("[AppCore] Failed to parse router settings: %v", err)
+          		return defaultSettings
+          	}
+
+          	return &settings
+          }
+
+          // GetAppAboutInfo возвращает информацию о приложении Hydra.
+          func (a *AppCore) GetAppAboutInfo() *AppAboutInfo {
+          	return &AppAboutInfo{
+          		AppVersion: "2.0.0-hydra",
+          		I2PVersion: "Hydra Relay v2 (X25519 + XChaCha20)",
+          		I2PPath:    "Локальная зашифрованная БД (SQLite E2EE)",
+          		Author:     "Andreyll9 (Hydra) | Core: TeleGhost (MIT)",
+          		License:    "MIT / Open Source",
+          	}
+          }
+
+          // SaveRouterSettings сохраняет настройки роутера.
+          func (a *AppCore) SaveRouterSettings(settings map[string]interface{}) error {
+          	settingsFile := filepath.Join(a.DataDir, "router_settings.json")
+
+          	current := a.GetRouterSettings()
+
+          	if val, ok := settings["tunnelLength"].(float64); ok {
+          		current.TunnelLength = int(val)
+          	}
+          	if val, ok := settings["logToFile"].(bool); ok {
+          		current.LogToFile = val
+          	}
+
+          	data, err := json.MarshalIndent(current, "", "  ")
+          	if err != nil {
+          		return err
+          	}
+
+          	return os.WriteFile(settingsFile, data, 0600)
+          }
+
+          // GetNetworkStatus возвращает текущий статус сети
+          func (a *AppCore) GetNetworkStatus() string {
+          	return string(a.Status)
+          }
+          """
+              with open(settings_go_path, "w", encoding="utf-8") as f:
+                  f.write(clean_settings_go)
+              print("[OK] settings.go чисто обновлён без синтаксических ошибок")
 
           # 2. Убираем системные alert("http://127.0.0.1") и добавляем автоблокировку при сворачивании в App.svelte
           app_svelte = "frontend/src/App.svelte"
@@ -92,7 +161,7 @@ jobs:
                   ap = ap.replace("onMount(", stage3_app_js + "\n    onMount(", 1)
                   with open(app_svelte, "w", encoding="utf-8") as f:
                       f.write(ap)
-                  print("[OK] App.svelte: убраны окна http://127.0.0.1 и включена автоблокировка при сворачивании")
+                  print("[OK] App.svelte обновлён")
 
           # 3. Исправляем Settings.svelte
           settings_path = "frontend/src/components/Settings.svelte"
@@ -210,10 +279,6 @@ jobs:
               if "Ложный ПИН-код (Duress PIN)" not in st:
                   st = st.replace("Сменить ПИН-код</button>", "Сменить ПИН-код</button>" + stage3_privacy_cards, 1)
 
-              st = re.sub(r"\{aboutInfo\.i2p_path\s*\|\|\s*'[^']*'\}|\{aboutInfo\.i2p_path\}", lambda _: "'Локальная зашифрованная БД (SQLite E2EE)'", st)
-              st = re.sub(r"\{aboutInfo\.i2p_version\s*\|\|\s*'[^']*'\}|\{aboutInfo\.i2p_version\}", lambda _: "'Hydra Relay v2 (X25519 + XChaCha20)'", st)
-              st = re.sub(r"\{aboutInfo\.author\s*\|\|\s*'[^']*'\}|\{aboutInfo\.author\}", lambda _: "'Andreyll9 (Hydra) | Core: TeleGhost (MIT)'", st)
-
               with open(settings_path, "w", encoding="utf-8") as f:
                   f.write(st)
               print("[OK] Settings.svelte полностью обновлён")
@@ -295,7 +360,7 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           if [ -n "$(git status --porcelain)" ]; then
             git add .
-            git commit -m "Stage 3: Fix ping/export RPC errors, update About screen, add Hydra Master Key & Biometric/Duress PIN [skip ci]"
+            git commit -m "Stage 3: Clean settings.go, fix ping/export RPC errors, add Hydra Master Key & Biometric/Duress PIN [skip ci]"
             git pull --rebase origin main || true
             git push || true
           fi
