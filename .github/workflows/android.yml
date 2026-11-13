@@ -96,7 +96,7 @@ jobs:
 
                               ret_part = line.split(")")[-1]
                               returns_only_err = "error" in ret_part and "," not in ret_part
-                              err_ret_ prefix = "return " if returns_only_err else "return nil, "
+                              err_ret_prefix = "return " if returns_only_err else "return nil, "
 
                               new_lines.append(f"""
           	{dest_var} = strings.TrimSpace({dest_var})
