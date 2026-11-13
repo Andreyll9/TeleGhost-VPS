@@ -352,30 +352,6 @@
             alert('Разрешите доступ к микрофону и камере в настройках Android: ' + err);
         }
     }
-        recordMode = mode;
-        try {
-            const stream = await navigator.mediaDevices.getUserMedia({
-                audio: true,
-                video: mode === 'video' ? { facingMode: 'user', width: 240, height: 240 } : false
-            });
-            recordedChunks = [];
-            mediaRecorderInstance = new MediaRecorder(stream);
-            mediaRecorderInstance.ondataavailable = (e) => {
-                if (e.data && e.data.size > 0) recordedChunks.push(e.data);
-            };
-            mediaRecorderInstance.onstop = () => {
-                stream.getTracks().forEach(t => t.stop());
-                const label = recordMode === 'video' ? '📹 [Видео-кружок E2EE]' : '🎤 [Голосовое сообщение E2EE]';
-                newMessage = ((newMessage || '') + ' ' + label).trim();
-                handleSend();
-            };
-            mediaRecorderInstance.start();
-            isRecordingMedia = true;
-        } catch (err) {
-            newMessage = ((newMessage || '') + (mode === 'video' ? ' 📹 [Видео-кружок]' : ' 🎤 [Голосовое сообщение]')).trim();
-        }
-    }
-    
 </script>
 
 <div class="chat-area animate-fade-in" class:mobile={isMobile}>
