@@ -1,8 +1,13 @@
 package appcore
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"teleghost/internal/core"
@@ -49,6 +54,46 @@ func (a *AppCore) GetContacts() ([]*ContactInfo, error) {
 
 // AddContact добавляет контакт по адресу.
 func (a *AppCore) AddContact(name, destination string) (*ContactInfo, error) {
+
+	name = strings.TrimSpace(name)
+	if name == "__PING_SERVER__" {
+		start := time.Now()
+		myPub := ""
+		if a.Identity != nil && a.Identity.Keys != nil {
+			myPub = a.Identity.Keys.PublicKeyBase64
+		}
+		client := &http.Client{Timeout: 5 * time.Second}
+		resp, err := client.Get("http://191.223.137.164:8085/health?pub=" + url.QueryEscape(myPub))
+		if err != nil {
+			return nil, fmt.Errorf("❌ Сервер недоступен: %v", err)
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		var h map[string]interface{}
+		_ = json.Unmarshal(body, &h)
+		rtt := time.Since(start).Milliseconds()
+		if wsOk, _ := h["ws_connected"].(bool); wsOk {
+			return nil, fmt.Errorf("✅ Канал E2EE активен! Отклик Relay: %d мс (узлов онлайн: %v)", rtt, h["online_peers"])
+		}
+		return nil, fmt.Errorf("✅ Сервер на связи (%d мс, онлайн: %v)", rtt, h["online_peers"])
+	}
+	if len(name) < 40 {
+		nick := strings.TrimPrefix(name, "@")
+		client := &http.Client{Timeout: 5 * time.Second}
+		resp, err := client.Get("http://191.223.137.164:8085/nick/resolve?nick=" + url.QueryEscape(nick))
+		if err == nil {
+			defer resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				body, _ := io.ReadAll(resp.Body)
+				var res map[string]string
+				if json.Unmarshal(body, &res) == nil && res["pub_key"] != "" {
+					name = res["pub_key"]
+				}
+			} else {
+				return nil, fmt.Errorf("пользователь @%s не найден на сервере", nick)
+			}
+		}
+	}
 	if a.Repo == nil {
 		return nil, fmt.Errorf("not logged in")
 	}

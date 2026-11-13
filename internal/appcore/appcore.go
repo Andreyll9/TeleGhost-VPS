@@ -21,7 +21,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -277,7 +276,7 @@ func (a *AppCore) Shutdown() {
 func (a *AppCore) UpdateMyProfile(nickname, bio, avatar string) error {
 	if strings.TrimSpace(nickname) != "" && a.Identity != nil {
 		cleanNick := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(nickname), "@"))
-		pub := a.Identity.Destination
+		pub := a.Identity.Keys.PublicKeyBase64
 		sig := ed25519.Sign(a.Identity.Keys.SigningPrivateKey, []byte("HYDRA-NICK:"+cleanNick+":"+pub))
 		reqBody, _ := json.Marshal(map[string]string{
 			"nickname":  cleanNick,
@@ -645,6 +644,7 @@ func (a *AppCore) ConnectToI2P() {
 	a.SetNetworkStatus(StatusConnecting)
 	if a.Repo != nil && a.Identity != nil {
 		dest := a.Identity.Keys.PublicKeyBase64
+		router.SetGlobalPrivateKey(a.Identity.Keys.SigningPrivateKey)
 		if user, _ := a.Repo.GetMyProfile(a.Ctx); user != nil {
 			user.I2PAddress = dest
 			_ = a.Repo.SaveUser(a.Ctx, user)
