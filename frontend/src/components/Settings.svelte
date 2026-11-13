@@ -106,11 +106,6 @@
     function saveDuressPin() {
         localStorage.setItem('hydra_duress_pin', duressPinValue.trim());
         if (typeof showToast === 'function') showToast('✅ Ложный ПИН-код сохранён', 'success');
-    } catch (err) {
-            pingStatusText = typeof err === 'string' ? err : (err?.message || String(err));
-        } finally {
-            isPingingServer = false;
-        }
     }
 
 </script>
