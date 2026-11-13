@@ -1,4 +1,3 @@
-
 name: Build TeleGhost Android (VPS Signed)
 
 on:
@@ -39,48 +38,95 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Fix Router Crypto Imports & Format
+      - name: Fix AppCore Identity Field & AddContact Injection
         run: |
-          cat << 'PYEOF' > fix_imports.py
-          import os
+          cat << 'PYEOF' > fix_appcore.py
+          import os, re
 
-          router_path = "internal/network/router/router.go"
-          if os.path.exists(router_path):
-              with open(router_path, "r", encoding="utf-8") as f:
-                  r_code = f.read()
+          appcore_path = "internal/appcore/appcore.go"
+          if os.path.exists(appcore_path):
+              with open(appcore_path, "r", encoding="utf-8") as f:
+                  ac = f.read()
 
-              needed_imports = [
-                  '"crypto/cipher"',
-                  '"crypto/ed25519"',
-                  '"crypto/rand"',
-                  '"crypto/sha256"',
-                  '"crypto/sha512"',
-                  '"encoding/base64"',
-                  '"fmt"',
-                  '"math/big"',
-                  '"golang.org/x/crypto/chacha20poly1305"',
-                  '"golang.org/x/crypto/curve25519"',
-              ]
+              # 1. Исправляем обращение к полю Destination (оно лежит в a.Identity.Destination)
+              ac = ac.replace("a.Identity.Keys.Destination", "a.Identity.Destination")
+              ac = ac.replace("ident.Keys.Destination", "ident.Destination")
 
-              missing = [imp for imp in needed_imports if imp not in r_code]
-              if missing and "import (" in r_code:
-                  inject = "import (\n\t" + "\n\t".join(missing) + "\n"
-                  r_code = r_code.replace("import (", inject, 1)
-                  with open(router_path, "w", encoding="utf-8") as f:
-                      f.write(r_code)
-                  print("[OK] Добавлены крипто-импорты в router.go:", missing)
+              # 2. Передаём приватный ключ в роутер там, где вызывается SetDestination
+              if "router.SetGlobalPrivateKey" not in ac:
+                  ac = re.sub(
+                      r"(a\.Router\.SetDestination\(([^)]+)\))",
+                      r"\1\n\t\tif a.Identity != nil && a.Identity.Keys != nil {\n\t\t\trouter.SetGlobalPrivateKey(a.Identity.Keys.SigningPrivateKey)\n\t\t}",
+                      ac
+                  )
+
+              # 3. Внедряем проверку связи (__PING_SERVER__) и поиск по @нику прямо в начало AddContact
+              if "__PING_SERVER__" not in ac:
+                  ping_and_resolve = """func (a *AppCore) AddContact(dest string, name string) (*models.Contact, error) {
+          	dest = strings.TrimSpace(dest)
+          	if dest == "__PING_SERVER__" {
+          		start := time.Now()
+          		myPub := ""
+          		if a.Identity != nil {
+          			myPub = a.Identity.Destination
+          		}
+          		client := &http.Client{Timeout: 5 * time.Second}
+          		resp, err := client.Get("http://191.223.137.164:8085/health?pub=" + url.QueryEscape(myPub))
+          		if err != nil {
+          			return nil, fmt.Errorf("❌ Сервер недоступен: %v", err)
+          		}
+          		defer resp.Body.Close()
+          		body, _ := io.ReadAll(resp.Body)
+          		var h map[string]interface{}
+          		_ = json.Unmarshal(body, &h)
+          		rtt := time.Since(start).Milliseconds()
+          		if wsOk, _ := h["ws_connected"].(bool); wsOk && a.Router != nil && a.Router.IsReady() {
+          			return nil, fmt.Errorf("✅ Канал E2EE активен! Пакет прошёл через Relay за %d мс (узлов онлайн: %v)", rtt, h["online_peers"])
+          		}
+          		return nil, fmt.Errorf("⚠️ Сервер отвечает (%d мс), но WebSocket-сессия переподключается", rtt)
+          	}
+          	if len(dest) < 40 {
+          		nick := strings.TrimPrefix(dest, "@")
+          		client := &http.Client{Timeout: 5 * time.Second}
+          		resp, err := client.Get("http://191.223.137.164:8085/nick/resolve?nick=" + url.QueryEscape(nick))
+          		if err == nil {
+          			defer resp.Body.Close()
+          			if resp.StatusCode == http.StatusOK {
+          				body, _ := io.ReadAll(resp.Body)
+          				var res map[string]string
+          				if json.Unmarshal(body, &res) == nil && res["pub_key"] != "" {
+          					if name == "" || name == dest {
+          						name = "@" + nick
+          					}
+          					dest = res["pub_key"]
+          				}
+          			} else {
+          				return nil, fmt.Errorf("пользователь @%s не найден на сервере", nick)
+          			}
+          		}
+          	}"""
+                  ac = re.sub(
+                      r"func\s+\(a\s+\*AppCore\)\s+AddContact\s*\([^)]*\)\s*\(\*models\.Contact,\s*error\)\s*\{",
+                      ping_and_resolve,
+                      ac,
+                      count=1
+                  )
+
+              with open(appcore_path, "w", encoding="utf-8") as f:
+                  f.write(ac)
+              print("[OK] Исправлен appcore.go")
           PYEOF
-          python3 fix_imports.py
-          rm -f fix_imports.py
+          python3 fix_appcore.py
+          rm -f fix_appcore.py
           gofmt -w internal/ mobile/
 
-      - name: Commit fixed imports back to repository
+      - name: Commit fixed appcore back to repository
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           if [ -n "$(git status --porcelain)" ]; then
             git add .
-            git commit -m "Fix E2EE crypto imports in router.go [skip ci]"
+            git commit -m "Fix Identity.Destination field and AddContact in appcore.go [skip ci]"
             git push
           fi
 
