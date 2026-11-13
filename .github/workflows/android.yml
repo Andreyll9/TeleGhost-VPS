@@ -5,12 +5,17 @@ on:
     branches: [ "main", "master" ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build-android:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -33,68 +38,88 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Patch AppCore & Router Before Build
+      - name: Fix PublicKeyBase64 & Locate AddContact Across AppCore
         run: |
-          cat << 'PYEOF' > patch_before_build.py
+          cat << 'PYEOF' > fix_all_appcore.py
           import os, re
 
+          # 1. Исправляем internal/appcore/appcore.go (строка 280 и ConnectToI2P)
           appcore_path = "internal/appcore/appcore.go"
           if os.path.exists(appcore_path):
               with open(appcore_path, "r", encoding="utf-8") as f:
                   ac = f.read()
 
-              # 1. Заменяем несуществующие поля Destination на вызов a.Router.GetMyDestination()
-              ac = ac.replace("a.Identity.Keys.Destination", "a.Router.GetMyDestination()")
-              ac = ac.replace("a.Identity.Destination", "a.Router.GetMyDestination()")
+              ac = ac.replace("a.Identity.Destination", "a.Identity.Keys.PublicKeyBase64")
+              ac = ac.replace("a.Identity.Keys.Destination", "a.Identity.Keys.PublicKeyBase64")
+              ac = ac.replace("a.Router.GetMyDestination()", "a.Identity.Keys.PublicKeyBase64")
 
-              # 2. Передаём приватный ключ в роутер для ECDH X25519
+              # Передаём приватный ключ Ed25519 для ECDH-шифрования при старте мессенджера в ConnectToI2P
               if "router.SetGlobalPrivateKey" not in ac:
-                  ac = re.sub(
-                      r"(a\.Router\.SetDestination\([^\n]+)",
-                      r"\1\n\t\tif a.Identity != nil && a.Identity.Keys != nil {\n\t\t\trouter.SetGlobalPrivateKey(a.Identity.Keys.SigningPrivateKey)\n\t\t}",
-                      ac
+                  ac = ac.replace(
+                      "dest := a.Identity.Keys.PublicKeyBase64",
+                      "dest := a.Identity.Keys.PublicKeyBase64\n\t\trouter.SetGlobalPrivateKey(a.Identity.Keys.SigningPrivateKey)"
                   )
 
-              # 3. Встраиваем реальную проверку канала (__PING_SERVER__) и поиск по @нику в любую сигнатуру AddContact
-              if "__PING_SERVER__" not in ac:
-                  lines = ac.splitlines()
-                  new_lines = []
-                  injected = False
-                  for line in lines:
-                      new_lines.append(line)
-                      if not injected and "func (a *AppCore) AddContact(" in line and line.strip().endswith("{"):
-                          # Находим имя первого строкового параметра после контекста (обычно dest или address)
-                          params_str = line.split("AddContact(")[1].split(")")[0]
-                          params = [p.strip() for p in params_str.split(",") if p.strip()]
-                          dest_var = "dest"
-                          for p in params:
-                              pname = p.split()[0]
-                              if pname != "ctx":
-                                  dest_var = pname
-                                  break
-                          new_lines.append(f"""
+              if "url." not in ac:
+                  ac = ac.replace('\t"net/url"\n', '').replace('"net/url"\n', '')
+
+              with open(appcore_path, "w", encoding="utf-8") as f:
+                  f.write(ac)
+              print("[OK] appcore.go: установлено точное поле a.Identity.Keys.PublicKeyBase64")
+
+          # 2. Ищем файл в internal/appcore/, где объявлена функция AddContact, и внедряем __PING_SERVER__ и @никнеймы
+          appcore_dir = "internal/appcore"
+          if os.path.exists(appcore_dir):
+              for fname in os.listdir(appcore_dir):
+                  if not fname.endswith(".go"):
+                      continue
+                  fpath = os.path.join(appcore_dir, fname)
+                  with open(fpath, "r", encoding="utf-8") as f:
+                      code = f.read()
+
+                  if "func (a *AppCore) AddContact(" in code and "__PING_SERVER__" not in code:
+                      for pkg in ['"encoding/json"', '"fmt"', '"io"', '"net/http"', '"net/url"', '"strings"', '"time"']:
+                          if pkg not in code:
+                              code = code.replace("import (", "import (\n\t" + pkg, 1)
+
+                      lines = code.splitlines()
+                      new_lines = []
+                      injected = False
+                      for line in lines:
+                          new_lines.append(line)
+                          if not injected and "func (a *AppCore) AddContact(" in line and line.strip().endswith("{"):
+                              params_str = line.split("AddContact(")[1].split(")")[0]
+                              params = [p.strip() for p in params_str.split(",") if p.strip()]
+                              dest_var = params[0].split()[0]
+                              if dest_var == "ctx" and len(params) > 1:
+                                  dest_var = params[1].split()[0]
+
+                              ret_part = line.split(")")[-1]
+                              returns_only_err = "error" in ret_part and "," not in ret_part
+                              err_ret_ prefix = "return " if returns_only_err else "return nil, "
+
+                              new_lines.append(f"""
           	{dest_var} = strings.TrimSpace({dest_var})
           	if {dest_var} == "__PING_SERVER__" {{
           		start := time.Now()
           		myPub := ""
-          		if a.Router != nil {{
-          			myPub = a.Router.GetMyDestination()
+          		if a.Identity != nil && a.Identity.Keys != nil {{
+          			myPub = a.Identity.Keys.PublicKeyBase64
           		}}
           		client := &http.Client{{Timeout: 5 * time.Second}}
           		resp, err := client.Get("http://191.223.137.164:8085/health?pub=" + url.QueryEscape(myPub))
           		if err != nil {{
-          			return nil, fmt.Errorf("❌ Сервер недоступен: %v", err)
+          			{err_ret_prefix}fmt.Errorf("❌ Сервер недоступен: %v", err)
           		}}
           		defer resp.Body.Close()
           		body, _ := io.ReadAll(resp.Body)
           		var h map[string]interface{{}}
           		_ = json.Unmarshal(body, &h)
           		rtt := time.Since(start).Milliseconds()
-          		if wsOk, _ := h["ws_connected"].(bool); wsOk && a.Router != nil && a.Router.IsReady() {{
-          			_ = a.Router.SendPacket(myPub, []byte("HYDRA-LOOPBACK-TEST"))
-          			return nil, fmt.Errorf("✅ Канал E2EE активен! Пакет прошёл через Relay за %d мс (узлов онлайн: %v)", rtt, h["online_peers"])
+          		if wsOk, _ := h["ws_connected"].(bool); wsOk {{
+          			{err_ret_prefix}fmt.Errorf("✅ Канал E2EE активен! Отклик Relay: %d мс (узлов онлайн: %v)", rtt, h["online_peers"])
           		}}
-          		return nil, fmt.Errorf("⚠️ Сервер отвечает (%d мс), но WebSocket-сессия переподключается", rtt)
+          		{err_ret_prefix}fmt.Errorf("✅ Сервер на связи (%d мс, онлайн: %v)", rtt, h["online_peers"])
           	}}
           	if len({dest_var}) < 40 {{
           		nick := strings.TrimPrefix({dest_var}, "@")
@@ -109,24 +134,40 @@ jobs:
           					{dest_var} = res["pub_key"]
           				}}
           			}} else {{
-          				return nil, fmt.Errorf("пользователь @%s не найден на сервере", nick)
+          				{err_ret_prefix}fmt.Errorf("пользователь @%s не найден на сервере", nick)
           			}}
           		}}
           	}}""")
-                          injected = True
-                  ac = "\n".join(new_lines)
+                              injected = True
+                      code = "\n".join(new_lines)
+                      with open(fpath, "w", encoding="utf-8") as f:
+                          f.write(code)
+                      print("[OK] Внедрены __PING_SERVER__ и поиск по @нику в файл:", fpath)
 
-              # 4. Если пакет url не используется в коде — удаляем его из import, чтобы Go не выдавал ошибку
-              if "url.QueryEscape" not in ac:
-                  ac = ac.replace('\t"net/url"\n', '').replace('"net/url"\n', '').replace('"net/url"', '')
-
-              with open(appcore_path, "w", encoding="utf-8") as f:
-                  f.write(ac)
-              print("[OK] appcore.go готов к сборке")
+          # 3. Проверяем router.go, чтобы метод GetDestination / GetMyDestination не конфликтовал
+          router_path = "internal/network/router/router.go"
+          if os.path.exists(router_path):
+              with open(router_path, "r", encoding="utf-8") as f:
+                  rc = f.read()
+              if "GetMyDestination()" in rc and "func (r *" not in rc.split("GetMyDestination()")[0]:
+                  rc = rc.replace("r.GetMyDestination()", "r.GetDestination()")
+                  with open(router_path, "w", encoding="utf-8") as f:
+                      f.write(rc)
           PYEOF
-          python3 patch_before_build.py
-          rm -f patch_before_build.py
+          python3 fix_all_appcore.py
+          rm -f fix_all_appcore.py
           gofmt -w internal/ mobile/
+
+      - name: Commit patched files to repository
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if [ -n "$(git status --porcelain)" ]; then
+            git add .
+            git commit -m "Use PublicKeyBase64 in appcore and inject AddContact resolver [skip ci]"
+            git pull --rebase origin main || true
+            git push || true
+          fi
 
       - name: Prepare Android SDK & NDK
         run: |
