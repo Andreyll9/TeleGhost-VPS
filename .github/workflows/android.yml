@@ -38,329 +38,37 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Apply Stage 3 & Fix All Screenshot Bugs
+      - name: Clean Orphan Catch Block in Settings.svelte
         run: |
-          cat << 'PYEOF' > apply_stage3.py
+          cat << 'PYEOF' > fix_settings_svelte.py
           import os, re
 
-          # 1. Чисто перезаписываем internal/appcore/settings.go (без регулярок, ломающих filepath.Join)
-          settings_go_path = "internal/appcore/settings.go"
-          if os.path.exists(settings_go_path):
-              clean_settings_go = """package appcore
-
-          import (
-          	"encoding/json"
-          	"log"
-          	"os"
-          	"path/filepath"
-          )
-
-          // GetMyDestination возвращает крипто-ключ Hydra.
-          func (a *AppCore) GetMyDestination() string {
-          	if a.Messenger == nil {
-          		if a.Identity != nil && a.Identity.Keys != nil {
-          			return a.Identity.Keys.PublicKeyBase64
-          		}
-          		return ""
-          	}
-          	return a.Messenger.GetDestination()
-          }
-
-          // GetRouterSettings возвращает настройки соединения.
-          func (a *AppCore) GetRouterSettings() *RouterSettings {
-          	settingsFile := filepath.Join(a.DataDir, "router_settings.json")
-
-          	defaultSettings := &RouterSettings{
-          		TunnelLength: 1,
-          		LogToFile:    false,
-          	}
-
-          	data, err := os.ReadFile(settingsFile)
-          	if err != nil {
-          		return defaultSettings
-          	}
-
-          	var settings RouterSettings
-          	if err := json.Unmarshal(data, &settings); err != nil {
-          		log.Printf("[AppCore] Failed to parse router settings: %v", err)
-          		return defaultSettings
-          	}
-
-          	return &settings
-          }
-
-          // GetAppAboutInfo возвращает информацию о приложении Hydra.
-          func (a *AppCore) GetAppAboutInfo() *AppAboutInfo {
-          	return &AppAboutInfo{
-          		AppVersion: "2.0.0-hydra",
-          		I2PVersion: "Hydra Relay v2 (X25519 + XChaCha20)",
-          		I2PPath:    "Локальная зашифрованная БД (SQLite E2EE)",
-          		Author:     "Andreyll9 (Hydra) | Core: TeleGhost (MIT)",
-          		License:    "MIT / Open Source",
-          	}
-          }
-
-          // SaveRouterSettings сохраняет настройки роутера.
-          func (a *AppCore) SaveRouterSettings(settings map[string]interface{}) error {
-          	settingsFile := filepath.Join(a.DataDir, "router_settings.json")
-
-          	current := a.GetRouterSettings()
-
-          	if val, ok := settings["tunnelLength"].(float64); ok {
-          		current.TunnelLength = int(val)
-          	}
-          	if val, ok := settings["logToFile"].(bool); ok {
-          		current.LogToFile = val
-          	}
-
-          	data, err := json.MarshalIndent(current, "", "  ")
-          	if err != nil {
-          		return err
-          	}
-
-          	return os.WriteFile(settingsFile, data, 0600)
-          }
-
-          // GetNetworkStatus возвращает текущий статус сети
-          func (a *AppCore) GetNetworkStatus() string {
-          	return string(a.Status)
-          }
-          """
-              with open(settings_go_path, "w", encoding="utf-8") as f:
-                  f.write(clean_settings_go)
-              print("[OK] settings.go чисто обновлён без синтаксических ошибок")
-
-          # 2. Убираем системные alert("http://127.0.0.1") и добавляем автоблокировку при сворачивании в App.svelte
-          app_svelte = "frontend/src/App.svelte"
-          if os.path.exists(app_svelte):
-              with open(app_svelte, "r", encoding="utf-8") as f:
-                  ap = f.read()
-
-              stage3_app_js = r"""
-              // Перехват системных alert от http://127.0.0.1 и показ красивого тоста
-              if (typeof window !== 'undefined' && !window.__hydraAlertPatched) {
-                  window.__hydraAlertPatched = true;
-                  window.alert = (msg) => {
-                      const text = String(msg || '').replace(/^Error:\s*/i, '');
-                      if (typeof showToast === 'function') {
-                          showToast(text, text.includes('✅') ? 'success' : 'error');
-                      }
-                  };
-                  // Автоматический запрос ПИН-кода / отпечатка при каждом сворачивании приложения
-                  document.addEventListener('visibilitychange', () => {
-                      if (document.visibilityState === 'hidden') {
-                          const mustLock = localStorage.getItem('hydra_always_lock') !== '0';
-                          if (mustLock && typeof isAuthenticated !== 'undefined' && isAuthenticated) {
-                              isAuthenticated = false;
-                          }
-                      }
-                  });
-              }
-          """
-              if "__hydraAlertPatched" not in ap:
-                  ap = ap.replace("onMount(", stage3_app_js + "\n    onMount(", 1)
-                  with open(app_svelte, "w", encoding="utf-8") as f:
-                      f.write(ap)
-                  print("[OK] App.svelte обновлён")
-
-          # 3. Исправляем Settings.svelte
           settings_path = "frontend/src/components/Settings.svelte"
           if os.path.exists(settings_path):
               with open(settings_path, "r", encoding="utf-8") as f:
                   st = f.read()
 
-              st = st.replace("I2P ВЕРСИЯ", "ПРОТОКОЛ СЕТИ")
-              st = st.replace("I2P версия", "Протокол сети")
-              st = st.replace("ПУТЬ I2P", "ХРАНИЛИЩЕ ДАННЫХ")
-              st = st.replace("Путь I2P", "Хранилище данных")
-              st = st.replace("TeleGhost Team", "Andreyll9 (Hydra Architecture)")
-              st = st.replace("Секретный ключ (Seed phrase)", "Мастер-ключ (Hydra Key)")
-              st = st.replace("Поделиться сетью (Экспорт)", "Конфигурация узлов (Экспорт)")
-              st = st.replace("Загрузить сеть (Импорт)", "Резервный узел (Импорт)")
-
-              old_ping_pattern = r"async function verifyHydraConnection\(\)\s*\{[\s\S]*?\n\s*\}"
-              new_ping_fn = r"""async function verifyHydraConnection() {
-                  isPingingServer = true;
-                  pingStatusText = '⏳ Проверка шифрованного канала до узла Hydra...';
-                  const start = Date.now();
-                  try {
-                      const myPub = encodeURIComponent(identity || '');
-                      const resp = await fetch('http://191.223.137.164:8085/health?pub=' + myPub, { cache: 'no-store' });
-                      const data = await resp.json();
-                      const rtt = Date.now() - start;
-                      if (data && data.status === 'ok') {
-                          if (data.ws_connected) {
-                              pingStatusText = `✅ Канал E2EE активен! Пакет прошёл через Relay за ${rtt} мс (онлайн: ${data.online_peers})`;
-                          } else {
-                              pingStatusText = `✅ Узел Hydra доступен (${rtt} мс, онлайн: ${data.online_peers}). Сокет синхронизирован.`;
-                          }
-                      } else {
-                          pingStatusText = `⚠️ Узел ответил за ${rtt} мс, но вернул нестандартный статус.`;
-                      }
-                  } catch (err) {
-                      pingStatusText = '❌ Узел 191.223.137.164:8085 недоступен. Проверьте интернет или статус VPS.';
-                  } finally {
-                      isPingingServer = false;
-                  }
-              }
-
-              function toHydraMasterKey(rawSeed) {
-                  if (!rawSeed) return '';
-                  const clean = String(rawSeed).trim();
-                  if (clean.startsWith('HYDRA-KEY-')) return clean;
-                  try {
-                      const b64 = btoa(unescape(encodeURIComponent(clean))).replace(/=/g, '');
-                      return 'HYDRA-KEY-' + b64;
-                  } catch (e) {
-                      return 'HYDRA-KEY-' + clean.split(' ').join('-');
-                  }
-              }
-
-              let biometricEnabled = localStorage.getItem('hydra_biometric') !== '0';
-              let anonStoriesEnabled = localStorage.getItem('hydra_anon_stories') === '1';
-              let duressPinValue = localStorage.getItem('hydra_duress_pin') || '';
-
-              function toggleBiometric() {
-                  biometricEnabled = !biometricEnabled;
-                  localStorage.setItem('hydra_biometric', biometricEnabled ? '1' : '0');
-              }
-              function toggleAnonStories() {
-                  anonStoriesEnabled = !anonStoriesEnabled;
-                  localStorage.setItem('hydra_anon_stories', anonStoriesEnabled ? '1' : '0');
-              }
-              function saveDuressPin() {
-                  localStorage.setItem('hydra_duress_pin', duressPinValue.trim());
-                  if (typeof showToast === 'function') showToast('✅ Ложный ПИН-код сохранён', 'success');
-              }"""
-
-              if "verifyHydraConnection" in st:
-                  st = re.sub(old_ping_pattern, lambda _: new_ping_fn, st, count=1)
-              else:
-                  st = st.replace("</script>", new_ping_fn + "\n</script>", 1)
-
-              export_repl = "(() => { localStorage.setItem('hydra_node_backup', 'ws://191.223.137.164:8085/ws'); if (typeof showToast === 'function') showToast('✅ Конфигурация узла Hydra сохранена в память устройства', 'success'); return 'hydra_nodes.json'; })()"
-              import_repl = "(() => { if (typeof showToast === 'function') showToast('✅ Узел Hydra 191.223.137.164:8085 успешно проверен и активирован', 'success'); })()"
-
-              st = re.sub(r"await AppActions\.ExportNetDb\(\)", lambda _: export_repl, st)
-              st = re.sub(r"await AppActions\.ImportNetDb\([^)]*\)", lambda _: import_repl, st)
-
-              st = st.replace("{seedPhrase}", "{toHydraMasterKey(seedPhrase)}")
-
-              stage3_privacy_cards = """
-                  <div class="settings-card" style="margin-top: 14px; padding: 16px; background: #1E1F22; border-radius: 24px;">
-                      <div style="display: flex; justify-content: space-between; align-items: center;">
-                          <div>
-                              <div style="font-weight: 700; color: #E3E3E3; font-size: 15px;">👆 Разблокировка по отпечатку пальца</div>
-                              <div style="font-size: 13px; color: #9AA0A6; margin-top: 4px;">Автоматически запрашивать биометрию при входе</div>
-                          </div>
-                          <input type="checkbox" checked={biometricEnabled} on:change={toggleBiometric} style="width: 22px; height: 22px; accent-color: #8AB4F8;" />
-                      </div>
-                  </div>
-
-                  <div class="settings-card" style="margin-top: 14px; padding: 16px; background: #1E1F22; border-radius: 24px;">
-                      <div style="display: flex; justify-content: space-between; align-items: center;">
-                          <div>
-                              <div style="font-weight: 700; color: #E3E3E3; font-size: 15px;">🕵️ Анонимный просмотр историй (24ч)</div>
-                              <div style="font-size: 13px; color: #9AA0A6; margin-top: 4px;">Скрывать ваше имя в списке зрителей (режим невидимки)</div>
-                          </div>
-                          <input type="checkbox" checked={anonStoriesEnabled} on:change={toggleAnonStories} style="width: 22px; height: 22px; accent-color: #8AB4F8;" />
-                      </div>
-                  </div>
-
-                  <div class="settings-card" style="margin-top: 14px; padding: 16px; background: #1E1F22; border-radius: 24px;">
-                      <div style="font-weight: 700; color: #E3E3E3; font-size: 15px;">🛡️ Ложный ПИН-код (Duress PIN)</div>
-                      <div style="font-size: 13px; color: #9AA0A6; margin-top: 4px; margin-bottom: 12px;">При вводе этого кода на экране блокировки откроется пустой профиль-приманка без секретных чатов.</div>
-                      <div style="display: flex; gap: 8px;">
-                          <input type="password" placeholder="Задайте ложный ПИН..." bind:value={duressPinValue} class="input-field" style="flex: 1; border-radius: 14px; background: #121212; color: #E3E3E3; padding: 10px 14px; border: 1px solid rgba(255,255,255,0.08);" />
-                          <button type="button" on:click={saveDuressPin} style="border-radius: 100px; background: #8AB4F8; color: #062E6F; font-weight: 700; padding: 0 18px; border: none; cursor: pointer;">Сохранить</button>
-                      </div>
-                  </div>
-              """
-              if "Ложный ПИН-код (Duress PIN)" not in st:
-                  st = st.replace("Сменить ПИН-код</button>", "Сменить ПИН-код</button>" + stage3_privacy_cards, 1)
+              # Удаляем оставшийся от старой функции хвост catch (err) { ... } finally { isPingingServer = false; } }
+              st = re.sub(
+                  r"(showToast\('✅ Ложный ПИН-код сохранён',\s*'success'\);\s*\})\s*catch\s*\(err\)\s*\{[\s\S]*?isPingingServer\s*=\s*false;\s*\}\s*\}",
+                  lambda m: m.group(1),
+                  st
+              )
 
               with open(settings_path, "w", encoding="utf-8") as f:
                   f.write(st)
-              print("[OK] Settings.svelte полностью обновлён")
-
-          # 4. Обновляем экран входа Auth.svelte
-          auth_path = "frontend/src/components/Auth.svelte"
-          if os.path.exists(auth_path):
-              with open(auth_path, "r", encoding="utf-8") as f:
-                  au = f.read()
-
-              au = au.replace("let usePin = false;", "let usePin = true;")
-              au = au.replace("Seed-фразу (12 слов)", "Мастер-ключ (HYDRA-KEY-...)")
-              au = au.replace("seed-фразу", "Мастер-ключ HYDRA-KEY")
-
-              auth_helpers = """
-              function decodeHydraKeyIfNeeded(input) {
-                  if (!input) return input;
-                  const clean = input.trim();
-                  if (clean.startsWith('HYDRA-KEY-')) {
-                      try {
-                          const b64 = clean.slice('HYDRA-KEY-'.length);
-                          return decodeURIComponent(escape(atob(b64)));
-                      } catch (e) {
-                          return clean;
-                      }
-                  }
-                  return clean;
-              }
-
-              async function triggerBiometricUnlock() {
-                  if (localStorage.getItem('hydra_biometric') === '0') return;
-                  try {
-                      const savedPin = localStorage.getItem('hydra_bio_pin_' + (selectedProfile?.id || 'default'));
-                      if (savedPin) {
-                          pinInput = savedPin;
-                          await handleUnlock();
-                      }
-                  } catch (e) {
-                      console.error(e);
-                  }
-              }
-          """
-              if "decodeHydraKeyIfNeeded" not in au:
-                  au = au.replace("</script>", auth_helpers + "\n</script>", 1)
-                  au = au.replace(
-                      "async function handleUnlock() {",
-                      """async function handleUnlock() {
-                      const duress = localStorage.getItem('hydra_duress_pin');
-                      if (duress && pinInput === duress) {
-                          alert('Открыт защищённый гостевой профиль');
-                          return;
-                      }
-                      if (selectedProfile?.id && pinInput) {
-                          localStorage.setItem('hydra_bio_pin_' + selectedProfile.id, pinInput);
-                      }"""
-                  )
-                  au = au.replace("seedInput.trim()", "decodeHydraKeyIfNeeded(seedInput)")
-
-                  bio_btn = """
-                  <button type="button" on:click={triggerBiometricUnlock} style="margin-top: 10px; width: 100%; padding: 12px; border-radius: 100px; background: #28292D; color: #8AB4F8; border: 1px solid rgba(138,180,248,0.25); font-weight: 600; cursor: pointer;">
-                      👆 Войти по отпечатку пальца
-                  </button>
-                  """
-                  au = au.replace(
-                      '<button class="btn-primary-premium full-width" on:click={handleUnlock}',
-                      bio_btn + '\n              <button class="btn-primary-premium full-width" on:click={handleUnlock}'
-                  )
-                  with open(auth_path, "w", encoding="utf-8") as f:
-                      f.write(au)
-                  print("[OK] Auth.svelte обновлён")
+              print("[OK] Удалён лишний блок catch/finally в Settings.svelte")
           PYEOF
-          python3 apply_stage3.py
-          rm -f apply_stage3.py
-          gofmt -w internal/ mobile/
+          python3 fix_settings_svelte.py
+          rm -f fix_settings_svelte.py
 
-      - name: Commit Stage 3 changes to repository
+      - name: Commit fixed Settings.svelte to repository
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           if [ -n "$(git status --porcelain)" ]; then
             git add .
-            git commit -m "Stage 3: Clean settings.go, fix ping/export RPC errors, add Hydra Master Key & Biometric/Duress PIN [skip ci]"
+            git commit -m "Fix syntax in Settings.svelte [skip ci]"
             git pull --rebase origin main || true
             git push || true
           fi
