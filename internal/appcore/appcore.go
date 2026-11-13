@@ -1076,3 +1076,35 @@ func (a *AppCore) getReplyPreview(replyToID string, contact *core.Contact) *Repl
 		Content:    content,
 	}
 }
+
+// ChangePin меняет ПИН-код текущего профиля.
+func (a *AppCore) ChangePin(newPin string) error {
+	if a.ProfileManager == nil || a.Identity == nil {
+		return fmt.Errorf("not logged in")
+	}
+	meta, err := a.ProfileManager.GetProfileByUserID(a.Identity.Keys.UserID)
+	if err != nil || meta == nil {
+		return fmt.Errorf("profile not found")
+	}
+	return a.ProfileManager.UpdateProfile(meta.ID, meta.DisplayName, meta.AvatarPath, true, true, newPin, a.Identity.Mnemonic)
+}
+
+// SetPinUsage включает или выключает ПИН-код.
+func (a *AppCore) SetPinUsage(usePin bool, pin string) error {
+	if a.ProfileManager == nil || a.Identity == nil {
+		return fmt.Errorf("not logged in")
+	}
+	meta, err := a.ProfileManager.GetProfileByUserID(a.Identity.Keys.UserID)
+	if err != nil || meta == nil {
+		return fmt.Errorf("profile not found")
+	}
+	return a.ProfileManager.UpdateProfile(meta.ID, meta.DisplayName, meta.AvatarPath, true, usePin, pin, a.Identity.Mnemonic)
+}
+
+// GetMnemonic возвращает фразу/ключ текущего аккаунта.
+func (a *AppCore) GetMnemonic() string {
+	if a.Identity == nil {
+		return ""
+	}
+	return a.Identity.Mnemonic
+}

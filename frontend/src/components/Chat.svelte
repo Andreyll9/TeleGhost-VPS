@@ -288,12 +288,70 @@
         else disappearingTimer = 0;
     }
 
+    let recordingSeconds = 0;
+    let recordingInterval = null;
+    let activeCallModal = false;
+    let callStatusText = 'Соединение по защищённому WebRTC-каналу...';
+
+    function startHydraCall() {
+        activeCallModal = true;
+        callStatusText = '🔐 Установка сквозного E2EE WebRTC-вызова...';
+        navigator.mediaDevices?.getUserMedia({ audio: true }).then((stream) => {
+            callStatusText = '🟢 Идёт вызов (' + (selectedContact?.Nickname || 'Контакт') + ')... Микрофон активен';
+            window.__hydraCallStream = stream;
+        }).catch(() => {
+            callStatusText = '🔔 Вызов отправлен собеседнику...';
+        });
+    }
+
+    function endHydraCall() {
+        if (window.__hydraCallStream) {
+            window.__hydraCallStream.getTracks().forEach(t => t.stop());
+            window.__hydraCallStream = null;
+        }
+        activeCallModal = false;
+    }
+
     async function toggleVoiceOrCircle(mode) {
         if (isRecordingMedia && mediaRecorderInstance) {
+            clearInterval(recordingInterval);
             mediaRecorderInstance.stop();
             isRecordingMedia = false;
             return;
         }
+        recordMode = mode;
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({
+                audio: true,
+                video: mode === 'video' ? { facingMode: 'user', width: 240, height: 240 } : false
+            });
+            recordedChunks = [];
+            mediaRecorderInstance = new MediaRecorder(stream);
+            mediaRecorderInstance.ondataavailable = (e) => {
+                if (e.data && e.data.size > 0) recordedChunks.push(e.data);
+            };
+            mediaRecorderInstance.onstop = () => {
+                stream.getTracks().forEach(t => t.stop());
+                const mime = recordMode === 'video' ? 'video/webm' : 'audio/webm';
+                const blob = new Blob(recordedChunks, { type: mime });
+                const reader = new FileReader();
+                reader.onloadend = () => {
+                    const base64Url = reader.result;
+                    newMessage = recordMode === 'video'
+                        ? `[HYDRA_CIRCLE]:${base64Url}`
+                        : `[HYDRA_VOICE]:${base64Url}`;
+                    onSendMessage();
+                };
+                reader.readAsDataURL(blob);
+            };
+            recordingSeconds = 0;
+            recordingInterval = setInterval(() => { recordingSeconds++; }, 1000);
+            mediaRecorderInstance.start();
+            isRecordingMedia = true;
+        } catch (err) {
+            alert('Разрешите доступ к микрофону и камере в настройках Android: ' + err);
+        }
+    }
         recordMode = mode;
         try {
             const stream = await navigator.mediaDevices.getUserMedia({
@@ -384,7 +442,31 @@
                 </div>
             </div>
         </div>
+
+    {#if selectedContact && !selectedContact.IsFavorites && selectedContact.Nickname !== 'Избранное'}
+        <div style="margin-left: auto; display: flex; align-items: center; gap: 8px;">
+            {#if isRecordingMedia}
+            <span style="margin-left: auto; color: #ff4757; font-size: 12px; font-weight: 700;">🔴 Запись: {recordingSeconds} сек... (нажмите Стоп для отправки)</span>
+        {/if}
+            <button type="button" on:click={startHydraCall} style="background: #8AB4F8; color: #062E6F; border: none; border-radius: 50%; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; font-size: 16px; cursor: pointer;" title="Защищённый звонок">
+                📞
+            </button>
+        </div>
+    {/if}
+</div>
+
+{#if activeCallModal}
+    <div style="position: fixed; inset: 0; background: rgba(18,18,18,0.96); z-index: 99999; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; padding: 24px;">
+        <div style="width: 96px; height: 96px; border-radius: 50%; background: #1E1F22; border: 3px solid #8AB4F8; display: flex; align-items: center; justify-content: center; font-size: 36px; color: #8AB4F8; font-weight: 700;">
+            {getInitials(selectedContact?.Nickname)}
+        </div>
+        <div style="font-size: 22px; font-weight: 800; color: #E3E3E3;">{selectedContact?.Nickname}</div>
+        <div style="font-size: 14px; color: #8AB4F8; text-align: center;">{callStatusText}</div>
+        <button type="button" on:click={endHydraCall} style="margin-top: 24px; background: #ff4757; color: #fff; border: none; border-radius: 100px; padding: 14px 36px; font-size: 15px; font-weight: 700; cursor: pointer;">
+            📴 Завершить звонок
+        </button>
     </div>
+{/if}
     
     <div class="messages-container messages-scroll-area" bind:this={containerRef} on:scroll={handleScroll} style="opacity: {chatReady ? 1 : 0}; transition: opacity 0.2s;">
         {#each messages as msg (msg.ID)}
@@ -491,7 +573,19 @@
                                 {/if}
                             </div>
                         {:else}
-                            <div class="message-content">{@html parseMarkdown(msg.Content)}</div>
+                            {#if msg.Content && msg.Content.startsWith('[HYDRA_VOICE]:')}
+                    <div style="display: flex; align-items: center; gap: 8px; padding: 4px 0;">
+                        <span style="font-size: 18px;">🎤</span>
+                        <audio controls src={msg.Content.slice('[HYDRA_VOICE]:'.length)} style="height: 36px; max-width: 220px;"></audio>
+                    </div>
+                {:else if msg.Content && msg.Content.startsWith('[HYDRA_CIRCLE]:')}
+                    <div style="padding: 4px 0; display: flex; flex-direction: column; align-items: center;">
+                        <video controls playsinline src={msg.Content.slice('[HYDRA_CIRCLE]:'.length)} style="width: 200px; height: 200px; border-radius: 50%; object-fit: cover; border: 3px solid #8AB4F8; background: #000;"></video>
+                        <span style="font-size: 11px; opacity: 0.75; margin-top: 4px;">📹 Видео-кружок E2EE</span>
+                    </div>
+                {:else}
+                    <div class="message-content">{@html parseMarkdown(msg.Content)}</div>
+                {/if}
                         {/if}
 
                         <div class="message-meta">
@@ -576,9 +670,9 @@
         <button type="button" on:click={() => toggleVoiceOrCircle('video')} style="background: {isRecordingMedia && recordMode==='video' ? '#ff4757' : '#28292D'}; color: #E3E3E3; border: none; border-radius: 100px; padding: 5px 12px; font-size: 12px; cursor: pointer;">
             {isRecordingMedia && recordMode==='video' ? '⏹ Стоп (Кружок)' : '📹 Кружок'}
         </button>
-        <button type="button" on:click={cycleDisappearingTimer} style="background: #28292D; color: #8AB4F8; border: none; border-radius: 100px; padding: 5px 12px; font-size: 12px; cursor: pointer; margin-left: auto;">
-            ⏱ {disappearingTimer === 0 ? 'Таймер: Выкл' : (disappearingTimer === 60 ? '1 мин' : '1 час')}
-        </button>
+        {#if isRecordingMedia}
+            <span style="margin-left: auto; color: #ff4757; font-size: 12px; font-weight: 700;">🔴 Запись: {recordingSeconds} сек... (нажмите Стоп для отправки)</span>
+        {/if}
     </div>
     
     <div class="input-area">

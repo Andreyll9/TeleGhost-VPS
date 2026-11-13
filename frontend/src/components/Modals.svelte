@@ -78,7 +78,7 @@
                 const detector = new BarcodeDetector({ formats: ['qr_code'] });
                 const codes = await detector.detect(bitmap);
                 if (codes.length > 0 && codes[0].rawValue) {
-                    newContactDest = codes[0].rawValue.trim();
+                    addContactAddress = codes[0].rawValue.trim();
                     return;
                 }
             }
@@ -88,6 +88,19 @@
         }
     }
 
+
+    function formatHydraKey(raw) {
+        if (!raw) return '';
+        const clean = String(raw).trim();
+        if (clean.startsWith('HYDRA-KEY-')) return clean;
+        try {
+            return 'HYDRA-KEY-' + btoa(unescape(encodeURIComponent(clean))).replace(/=/g, '');
+        } catch (e) {
+            return 'HYDRA-KEY-' + clean.split(' ').join('-');
+        }
+    }
+    let createEntityType = 'folder'; // 'folder' | 'group' | 'channel'
+    
 </script>
 
 <!-- Custom Confirm Modal -->
@@ -126,7 +139,7 @@
 >
     <div class="modal-content animate-slide-down" style="max-width: 400px;">
         <div class="modal-header">
-            <h3>{isEditingFolder ? 'Редактировать папку' : 'Новая папка'}</h3>
+            <h3>{isEditingFolder ? 'Редактировать' : (createEntityType === 'group' ? '👥 Новая группа E2EE' : (createEntityType === 'channel' ? '📢 Новый канал' : '📁 Новая папка'))}</h3>
             <button class="btn-icon" on:click={onCancelFolder}><div class="icon-svg">{@html Icons.X}</div></button>
         </div>
         <div class="modal-body">
@@ -183,7 +196,7 @@
             <!-- I2P Address - collapsed by default -->
             <div class="i2p-address-section">
                 <div class="i2p-toggle" on:click={() => showFullAddress = !showFullAddress} role="button" tabindex="0" on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && (showFullAddress = !showFullAddress)}>
-                    <span style="font-size: 12px; color: var(--text-secondary);">I2P Адрес</span>
+                    <span style="font-size: 12px; color: var(--text-secondary);">ID ключ Hydra</span>
                     <span style="font-size: 12px; color: var(--text-secondary);">
                         {#if !showFullAddress}
                             {contact.I2PAddress ? contact.I2PAddress.slice(0, 20) + '...' : 'Нет адреса'}
@@ -229,8 +242,15 @@
                 </label>
             </div>
             <div class="form-group" style="margin-top: 16px;">
-                <label class="form-label">I2P Адрес (Full Destination)
-                    <textarea bind:value={addContactAddress} class="input-field" rows="4" placeholder="Введите полный I2P адрес..."></textarea>
+                <label class="form-label">ID ключ Hydra или @никнейм
+                    <textarea bind:value={addContactAddress} class="input-field" rows="3" placeholder="Введите @никнейм друга или его ID ключ..."></textarea>
+        <div style="margin-top: 12px;">
+            <label style="display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; padding: 12px; border-radius: 100px; background: #28292D; color: #8AB4F8; border: 1px solid rgba(138,180,248,0.4); font-weight: 700; font-size: 13px; cursor: pointer;">
+                📷 Сканировать QR-код друга
+                <input type="file" accept="image/*" capture="environment" style="display: none;" on:change={handleScanQRFile} />
+            </label>
+        </div>
+    
                 </label>
             </div>
         </div>
@@ -253,24 +273,18 @@
 >
     <div class="modal-content animate-slide-down" style="max-width: 450px; background: #1a1a2e; border: 1px solid rgba(255, 100, 100, 0.2);">
         <div class="modal-header">
-            <h3 style="color: #ff6b6b;">🔐 Ваш секретный ключ</h3>
+            <h3 style="color: #ff6b6b;">🔐 Ваш Мастер-ключ Hydra</h3>
             <button class="btn-icon" on:click={onCloseSeed}><div class="icon-svg">{@html Icons.X}</div></button>
         </div>
         <div class="modal-body">
             <p class="warning-text" style="color: #ff6b6b; font-size: 13px; margin-bottom: 20px; background: rgba(255,100,100,0.1); padding: 12px; border-radius: 12px;">
-                ⚠️ Никогда не передавайте эти слова третьим лицам! Тот, у кого есть фраза, имеет ПОЛНЫЙ доступ к вашему аккаунту.
+                ⚠️ Никогда не передавайте этот Мастер-ключ третьим лицам! Он даёт ПОЛНЫЙ доступ к вашему аккаунту.
             </p>
             
-            <div class="mnemonic-grid" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 24px;">
-                {#each mnemonic.split(' ') as word, i}
-                    <div class="mnemonic-word" style="background: rgba(0,0,0,0.2); padding: 8px; border-radius: 10px; display: flex; align-items: center; gap: 8px; border: 1px solid rgba(255,255,255,0.05);">
-                        <span class="word-index" style="font-size: 10px; opacity: 0.5;">{i+1}</span>
-                        <span class="word-text" style="font-size: 13px; font-weight: 500;">{word}</span>
-                    </div>
-                {/each}
-            </div>
-            
-            <button class="btn-glass full-width clickable-btn" on:click={() => { AppActions.ClipboardSet(mnemonic); }} style="padding: 12px; border-radius: 16px;">
+            <div style="background: #121212; border: 1.5px solid #8AB4F8; border-radius: 18px; padding: 16px; margin-bottom: 20px; word-break: break-all; font-family: monospace; font-size: 13px; color: #8AB4F8; font-weight: 700; text-align: center; user-select: all;">
+            {formatHydraKey(mnemonic)}
+        </div>
+        <button class="btn-glass full-width clickable-btn" on:click={() => { AppActions.ClipboardSet(formatHydraKey(mnemonic)); }} style="padding: 12px; border-radius: 16px;">
                 📋 Скопировать всё
             </button>
         </div>

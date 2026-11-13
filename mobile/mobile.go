@@ -423,6 +423,20 @@ func dispatch(app *appcore.AppCore, method string, args []json.RawMessage) (inte
 	case "GetCurrentProfile":
 		return app.GetCurrentProfile(), nil
 
+	case "ChangePin":
+		var newPin string
+		parseArgs(args, &newPin)
+		return nil, app.ChangePin(newPin)
+
+	case "SetPinUsage":
+		var usePin bool
+		var pin string
+		parseArgs(args, &usePin, &pin)
+		return nil, app.SetPinUsage(usePin, pin)
+
+	case "GetMnemonic", "GetSeedPhrase":
+		return app.GetMnemonic(), nil
+
 	case "UpdateMyProfile":
 		var nickname, bio, avatar string
 		parseArgs(args, &nickname, &bio, &avatar)
@@ -508,6 +522,8 @@ func dispatch(app *appcore.AppCore, method string, args []json.RawMessage) (inte
 		var path string
 		parseArgs(args, &path)
 		return nil, app.Platform.ShareFile(path)
+
+	case "CreateFolder":
 		var name, icon string
 		parseArgs(args, &name, &icon)
 		return nil, app.CreateFolder(name, icon)

@@ -73,17 +73,17 @@
 
     let nickCheckStatus = '';
     async function checkNicknameAvailability() {
-        const clean = (nickname || '').trim().replace(/^@/, '').toLowerCase();
+        const clean = (profileNickname || '').trim().replace(/^@/, '').toLowerCase();
         if (clean.length < 3) {
-            nickCheckStatus = '⚠️ Минимум 3 символа';
+            nickCheckStatus = '⚠️ Минимум 3 символа для @ника';
             return;
         }
-        nickCheckStatus = '⏳ Проверка @' + clean + ' на сервере...';
+        nickCheckStatus = '⏳ Проверка и регистрация @' + clean + ' на VPS...';
         try {
-            await AppActions.UpdateMyProfile(clean, bio, avatarPreview);
-            nickCheckStatus = '✅ Никнейм @' + clean + ' свободен и закреплён за вашим ключом!';
+            await AppActions.UpdateMyProfile(clean, profileBio || '', profileAvatar || '');
+            nickCheckStatus = '✅ Никнейм @' + clean + ' свободен и закреплён вашей подписью Ed25519!';
         } catch (e) {
-            nickCheckStatus = '❌ Никнейм уже занят или сервер недоступен';
+            nickCheckStatus = '❌ Ошибка: ' + (typeof e === 'string' ? e : (e?.message || 'этот ник уже занят'));
         }
     }
 
@@ -172,7 +172,16 @@
                         
                         <div class="profile-fields">
                             <label class="form-label">Никнейм
-                                <input type="text" bind:value={profileNickname} class="input-field" placeholder="Ваш никнейм" />
+                                <input type="text" bind:value={profileNickname} on:input={() => nickCheckStatus = ""} class="input-field" placeholder="Ваш уникальный @никнейм" />
+                            <div style="margin-top: 10px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                                <button type="button" on:click={checkNicknameAvailability} style="background: #28292D; color: #8AB4F8; border: 1px solid rgba(138,180,248,0.35); border-radius: 100px; padding: 8px 16px; font-size: 12px; font-weight: 700; cursor: pointer;">
+                                    🔍 Проверить и закрепить @{profileNickname || 'ник'}
+                                </button>
+                                {#if nickCheckStatus}
+                                    <div style="width: 100%; font-size: 12px; color: #8AB4F8; margin-top: 4px;">{nickCheckStatus}</div>
+                                {/if}
+                            </div>
+    
                             </label>
                             <label class="form-label">О себе
                                 <textarea bind:value={profileBio} class="input-field" rows="3" placeholder="Расскажите о себе..."></textarea>
@@ -297,29 +306,13 @@
         
                         </div>
 
-                        <h4 class="section-title">Проверка канала и узлов Hydra</h4>
-                        <div class="settings-item-group">
-                            <div class="setting-item flex-row bg-box">
-                                <div>
-                                    <span class="label">Конфигурация узлов (Экспорт)</span>
-                                    <p class="hint">Создать файл для оффлайн-подключения друга</p>
-                                </div>
-                                <button class="btn-secondary" on:click={onExportReseed}>📤 Экспорт</button>
-                            </div>
-                            <div class="setting-item flex-row bg-box">
-                                <div>
-                                    <span class="label">Резервный узел (Импорт)</span>
-                                    <p class="hint">Импортировать файл .zip для подключения</p>
-                                </div>
-                                <button class="btn-secondary" on:click={onImportReseed}>📥 Импорт</button>
-                            </div>
-                        </div>
+                        
                     </div>
                 {:else if activeSettingsTab === 'about'}
                     <div class="settings-section animate-fade-in">
                         <div class="about-branding">
                             <div class="about-logo animate-float">
-                                <div class="icon-svg-lg">{@html Icons.Ghost}</div>
+                                <img src="/icon.png" alt="Hydra" style="width: 100%; height: 100%; object-fit: cover; border-radius: 28px;" />
                             </div>
                             <h2 class="about-title">Hydra</h2>
                             <p class="about-version">Version {aboutInfo.app_version || '1.0.2-beta'}</p>
@@ -345,7 +338,7 @@
                             <div class="info-item-fancy">
                                 <div class="info-icon">{@html Icons.Globe}</div>
                                 <div class="info-content">
-                                    <span class="info-label-fancy">I2P Версия</span>
+                                    <span class="info-label-fancy">Протокол и Канал</span>
                                     <span class="info-value-fancy">{aboutInfo.i2p_version || '2.58.0'}</span>
                                 </div>
                             </div>

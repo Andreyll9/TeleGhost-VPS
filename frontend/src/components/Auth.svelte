@@ -80,6 +80,7 @@
 
 
     function selectProfileForLogin(p) {
+        setTimeout(() => { if (typeof triggerBiometricUnlock === 'function') triggerBiometricUnlock(); }, 300);
         selectedProfile = p;
         if (p.use_pin) {
             authScreen = 'pin';
@@ -118,7 +119,7 @@
         if (!seedPhrase.trim()) return;
         isLoading = true;
         try {
-            await handleLoginAction(seedPhrase);
+            await handleLoginAction(decodeHydraKeyIfNeeded(seedPhrase));
         } catch (err) {
             showToast(err, 'error');
         } finally {
@@ -347,7 +348,7 @@
           </div>
           
           <button class="btn-glass full-width" on:click={() => authScreen = 'seed'}>
-            Войти по seed-фразе
+            Войти по Мастер-ключу HYDRA-KEY
           </button>
           
           <button class="btn-glass full-width" on:click={handleImportAccount} style="margin-top: 12px; border-style: dashed; opacity: 0.7;">
@@ -437,11 +438,11 @@
 
         {:else if authScreen === 'seed'}
           <div in:fly={{y: 20, duration: 400}}>
-            <p class="login-subtitle">Вход по фразе</p>
+            <p class="login-subtitle">Вход по Мастер-ключу</p>
             <div class="seed-form">
               <textarea
                 class="seed-input-premium"
-                placeholder="12 слов через пробел..."
+                placeholder="Вставьте ваш HYDRA-KEY-..."
                 bind:value={seedPhrase}
                 rows="3"
               ></textarea>
@@ -468,19 +469,13 @@
       <h2>🔐 Ваш секретный ключ</h2>
     </div>
     <div class="modal-body">
-      <p class="warning-text"><span class="icon-svg-sm">{@html Icons.AlertTriangle}</span> Сохраните эти 12 слов. Без них восстановить доступ невозможно!</p>
+      <p class="warning-text"><span class="icon-svg-sm">{@html Icons.AlertTriangle}</span> Сохраните этот монолитный Мастер-ключ HYDRA-KEY. Без него восстановить доступ невозможно!</p>
       
-      <div class="mnemonic-grid">
-        {#each newMnemonic.split(' ') as word, i}
-          <div class="mnemonic-word">
-            <span class="word-index">{i+1}</span>
-            <span class="word-text">{word}</span>
-          </div>
-        {/each}
+      <div style="background: #121212; border: 1.5px solid #8AB4F8; border-radius: 18px; padding: 16px; margin-bottom: 20px; word-break: break-all; font-family: monospace; font-size: 13px; color: #8AB4F8; font-weight: 700; text-align: center; user-select: all;">
+        {'HYDRA-KEY-' + btoa(unescape(encodeURIComponent(newMnemonic || ''))).replace(/=/g, '')}
       </div>
-
       <div class="mnemonic-actions">
-         <button class="btn-glass clickable-btn" on:click={() => { CopyToClipboard(newMnemonic); showToast('Скопировано в буфер обмена', 'success'); }} style="padding: 12px 24px; border-radius: 16px;">
+         <button class="btn-glass clickable-btn" on:click={() => { CopyToClipboard('HYDRA-KEY-' + btoa(unescape(encodeURIComponent(newMnemonic || ''))).replace(/=/g, '')); showToast('Скопировано в буфер обмена', 'success'); }} style="padding: 12px 24px; border-radius: 16px;">
            📋 Скопировать всё
          </button>
       </div>

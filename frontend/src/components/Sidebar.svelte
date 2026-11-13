@@ -243,39 +243,7 @@
         {/each}
     </div>
 
-    {#if showCreateStoryModal}
-        <div style="position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 9999; display: flex; align-items: center; justify-content: center; padding: 20px;">
-            <div style="background: #1E1F22; border-radius: 24px; padding: 20px; width: 100%; max-width: 360px;">
-                <h3 style="margin: 0 0 12px; color: #E3E3E3;">📸 Новая история (на 24 часа)</h3>
-                {#if newStoryImage}
-                    <img src={newStoryImage} alt="preview" style="width: 100%; max-height: 220px; object-fit: cover; border-radius: 16px; margin-bottom: 10px;" />
-                {/if}
-                <label style="display: block; text-align: center; padding: 10px; border-radius: 100px; background: #28292D; color: #8AB4F8; font-weight: 600; cursor: pointer; margin-bottom: 10px;">
-                    📷 Выбрать фото / Снять с камеры
-                    <input type="file" accept="image/*" style="display: none;" on:change={handleStoryFile} />
-                </label>
-                <input type="text" placeholder="Подпись к истории..." bind:value={newStoryText} style="width: 100%; padding: 12px; border-radius: 14px; background: #121212; color: #E3E3E3; border: 1px solid rgba(255,255,255,0.1); margin-bottom: 14px;" />
-                <div style="display: flex; gap: 8px;">
-                    <button type="button" on:click={() => showCreateStoryModal = false} style="flex: 1; padding: 11px; border-radius: 100px; background: #28292D; color: #E3E3E3; border: none;">Отмена</button>
-                    <button type="button" on:click={publishHydraStory} style="flex: 1; padding: 11px; border-radius: 100px; background: #8AB4F8; color: #062E6F; font-weight: 700; border: none;">Опубликовать</button>
-                </div>
-            </div>
-        </div>
-    {/if}
-
-    {#if activeStoryModal}
-        <div on:click={() => activeStoryModal = null} style="position: fixed; inset: 0; background: rgba(18,18,18,0.96); z-index: 9999; display: flex; flex-direction: column; justify-content: space-between; padding: 24px;">
-            <div style="display: flex; justify-content: space-between; align-items: center;">
-                <div>
-                    <div style="font-weight: 700; color: #E3E3E3;">{activeStoryModal.author}</div>
-                    <div style="font-size: 12px; color: #9AA0A6;">Исчезнет автоматически через 24ч</div>
-                </div>
-                <button type="button" style="background: #28292D; color: #fff; border: none; border-radius: 50%; width: 36px; height: 36px;">✕</button>
-            </div>
-            <div style="text-align: center; my: auto;">
-                {#if activeStoryModal.image}
-                    <img src={activeStoryModal.image} alt="story" style="max-width: 100%; max-height: 60vh; border-radius: 20px;" />
-                {/if}
+    
                 {#if activeStoryModal.text}
                     <div style="margin-top: 16px; font-size: 18px; color: #E3E3E3; font-weight: 600;">{activeStoryModal.text}</div>
                 {/if}
@@ -407,6 +375,29 @@
         </div>
 
         <!-- Mobile Contacts List -->
+        
+        <!-- Мобильная лента Сторис (24 часа) -->
+        <div style="display: flex; gap: 12px; padding: 8px 16px 12px; overflow-x: auto; border-bottom: 1px solid rgba(255,255,255,0.06); align-items: center; flex-shrink: 0;">
+            <div on:click={() => showCreateStoryModal = true} style="display: flex; flex-direction: column; align-items: center; cursor: pointer; min-width: 64px;">
+                <div style="width: 52px; height: 52px; border-radius: 50%; background: #1E1F22; border: 2px dashed #8AB4F8; display: flex; align-items: center; justify-content: center; font-size: 24px; color: #8AB4F8; font-weight: 700;">+</div>
+                <span style="font-size: 11px; color: #8AB4F8; font-weight: 600; margin-top: 4px; white-space: nowrap;">+ Сторис 24ч</span>
+            </div>
+            {#each hydraStories as st}
+                <div on:click={() => openHydraStory(st)} style="display: flex; flex-direction: column; align-items: center; cursor: pointer; min-width: 64px;">
+                    <div style="width: 52px; height: 52px; border-radius: 50%; padding: 2px; background: linear-gradient(135deg, #8AB4F8, #4285F4);">
+                        <div style="width: 100%; height: 100%; border-radius: 50%; background: #1E1F22; display: flex; align-items: center; justify-content: center; overflow: hidden;">
+                            {#if st.image}
+                                <img src={st.image} alt="story" style="width: 100%; height: 100%; object-fit: cover;" />
+                            {:else}
+                                <span style="font-size: 20px;">🔥</span>
+                            {/if}
+                        </div>
+                    </div>
+                    <span style="font-size: 11px; color: #E3E3E3; margin-top: 4px; max-width: 62px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{st.author}</span>
+                </div>
+            {/each}
+        </div>
+    
         <div class="contacts-list mobile-contacts">
             <!-- Mobile Favorites Chat -->
             {#if !searchQuery || 'избранное'.includes(searchQuery.toLowerCase()) || 'saved messages'.includes(searchQuery.toLowerCase()) || 'favorites'.includes(searchQuery.toLowerCase())}
@@ -486,6 +477,52 @@
                 <div class="icon-svg">{@html Icons.QrCode}</div>
                 <span>Мой адрес</span>
             </button>
+        </div>
+    </div>
+{/if}
+
+
+{#if showCreateStoryModal}
+    <div style="position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 99999; display: flex; align-items: center; justify-content: center; padding: 20px;">
+        <div style="background: #1E1F22; border: 1px solid rgba(138,180,248,0.25); border-radius: 24px; padding: 20px; width: 100%; max-width: 360px;">
+            <h3 style="margin: 0 0 6px; color: #E3E3E3;">📸 Выложить историю (на 24 часа)</h3>
+            <p style="margin: 0 0 14px; font-size: 12px; color: #9AA0A6;">История автоматически удалится ровно через 24 часа после публикации.</p>
+            {#if newStoryImage}
+                <img src={newStoryImage} alt="preview" style="width: 100%; max-height: 220px; object-fit: cover; border-radius: 16px; margin-bottom: 10px;" />
+            {/if}
+            <label style="display: block; text-align: center; padding: 12px; border-radius: 100px; background: #28292D; color: #8AB4F8; font-weight: 700; cursor: pointer; margin-bottom: 10px;">
+                📷 Выбрать фото / Снять с камеры
+                <input type="file" accept="image/*" style="display: none;" on:change={handleStoryFile} />
+            </label>
+            <input type="text" placeholder="Текст или подпись к истории..." bind:value={newStoryText} style="width: 100%; padding: 12px; border-radius: 14px; background: #121212; color: #E3E3E3; border: 1px solid rgba(255,255,255,0.1); margin-bottom: 14px;" />
+            <div style="display: flex; gap: 8px;">
+                <button type="button" on:click={() => showCreateStoryModal = false} style="flex: 1; padding: 12px; border-radius: 100px; background: #28292D; color: #E3E3E3; border: none; font-weight: 600;">Отмена</button>
+                <button type="button" on:click={publishHydraStory} style="flex: 1; padding: 12px; border-radius: 100px; background: #8AB4F8; color: #062E6F; font-weight: 700; border: none;">Опубликовать</button>
+            </div>
+        </div>
+    </div>
+{/if}
+
+{#if activeStoryModal}
+    <div on:click={() => activeStoryModal = null} style="position: fixed; inset: 0; background: rgba(18,18,18,0.96); z-index: 99999; display: flex; flex-direction: column; justify-content: space-between; padding: 24px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; padding-top: env(safe-area-inset-top, 10px);">
+            <div>
+                <div style="font-weight: 700; color: #E3E3E3; font-size: 16px;">{activeStoryModal.author}</div>
+                <div style="font-size: 12px; color: #8AB4F8;">⏱ Активна 24 часа • Защищено E2EE</div>
+            </div>
+            <button type="button" style="background: #28292D; color: #fff; border: none; border-radius: 50%; width: 38px; height: 38px; font-size: 16px;">✕</button>
+        </div>
+        <div style="text-align: center; margin: auto 0;">
+            {#if activeStoryModal.image}
+                <img src={activeStoryModal.image} alt="story" style="max-width: 100%; max-height: 58vh; border-radius: 20px;" />
+            {/if}
+            {#if activeStoryModal.text}
+                <div style="margin-top: 16px; font-size: 20px; color: #E3E3E3; font-weight: 600;">{activeStoryModal.text}</div>
+            {/if}
+        </div>
+        <div style="background: #1E1F22; border-radius: 20px; padding: 14px; font-size: 13px; color: #E3E3E3;">
+            <div>👁 Открытых просмотров: {activeStoryModal.openViews?.length || 0} {activeStoryModal.openViews?.length ? '(' + activeStoryModal.openViews.join(', ') + ')' : ''}</div>
+            <div style="color: #8AB4F8; margin-top: 4px;">🕵️ Анонимных просмотров (Невидимка): {activeStoryModal.anonViews || 0}</div>
         </div>
     </div>
 {/if}

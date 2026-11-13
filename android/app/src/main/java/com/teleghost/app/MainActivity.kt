@@ -41,7 +41,22 @@ class MainActivity : AppCompatActivity(), mobile.PlatformBridge {
         private const val NOTIFICATION_CHANNEL_ID = "teleghost_messages"
     }
 
-    private fun createNotificationChannel() {
+    private fun createNotificationChannel()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val needed = mutableListOf<String>()
+            if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                needed.add(android.Manifest.permission.RECORD_AUDIO)
+            }
+            if (checkSelfPermission(android.Manifest.permission.CAMERA) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                needed.add(android.Manifest.permission.CAMERA)
+            }
+            if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                needed.add(android.Manifest.permission.POST_NOTIFICATIONS)
+            }
+            if (needed.isNotEmpty()) {
+                requestPermissions(needed.toTypedArray(), 101)
+            }
+        } {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val name = "Messages"
             val descriptionText = "New messages from contacts"
@@ -249,12 +264,12 @@ class MainActivity : AppCompatActivity(), mobile.PlatformBridge {
                 }
 
                 val builder = androidx.core.app.NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
-                    .setSmallIcon(android.R.drawable.ic_dialog_email) // Replace with app icon if available: R.mipmap.ic_launcher
+                    .setSmallIcon(R.mipmap.ic_launcher) // Replace with app icon if available: R.mipmap.ic_launcher
                     .setContentTitle(title)
                     .setContentText(message)
                     .setPriority(androidx.core.app.NotificationCompat.PRIORITY_DEFAULT)
                     .setAutoCancel(true)
-                    .setOngoing(true) // Make notification persistent
+                    .setOngoing(false)
 
                 // PendingIntent to open app when clicked
                 val intent = Intent(this, MainActivity::class.java).apply {
@@ -407,6 +422,11 @@ class MainActivity : AppCompatActivity(), mobile.PlatformBridge {
         }
 
         webView.webChromeClient = object : WebChromeClient() {
+            override fun onPermissionRequest(request: PermissionRequest?) {
+                runOnUiThread {
+                    request?.grant(request.resources)
+                }
+            }
             override fun onConsoleMessage(msg: ConsoleMessage?): Boolean {
                 android.util.Log.d(TAG, "JS: ${msg?.message()} [${msg?.sourceId()}:${msg?.lineNumber()}]")
                 return true
