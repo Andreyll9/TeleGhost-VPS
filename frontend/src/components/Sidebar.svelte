@@ -243,18 +243,6 @@
         {/each}
     </div>
 
-    
-                {#if activeStoryModal.text}
-                    <div style="margin-top: 16px; font-size: 18px; color: #E3E3E3; font-weight: 600;">{activeStoryModal.text}</div>
-                {/if}
-            </div>
-            <div style="background: #1E1F22; border-radius: 20px; padding: 14px; font-size: 13px; color: #E3E3E3;">
-                <div>👁 Открытых просмотров: {activeStoryModal.openViews?.length || 0} {activeStoryModal.openViews?.length ? '(' + activeStoryModal.openViews.join(', ') + ')' : ''}</div>
-                <div style="color: #8AB4F8; margin-top: 4px;">🕵️ Анонимных просмотров: {activeStoryModal.anonViews || 0}</div>
-            </div>
-        </div>
-    {/if}
-    
         <div class="contacts-list">
             <!-- Favorites Chat -->
             {#if !searchQuery || 'избранное'.includes(searchQuery.toLowerCase()) || 'saved messages'.includes(searchQuery.toLowerCase()) || 'favorites'.includes(searchQuery.toLowerCase())}
