@@ -277,7 +277,7 @@ func (a *AppCore) Shutdown() {
 func (a *AppCore) UpdateMyProfile(nickname, bio, avatar string) error {
 	if strings.TrimSpace(nickname) != "" && a.Identity != nil {
 		cleanNick := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(nickname), "@"))
-		pub := a.Identity.Keys.Destination
+		pub := a.Identity.Destination
 		sig := ed25519.Sign(a.Identity.Keys.SigningPrivateKey, []byte("HYDRA-NICK:"+cleanNick+":"+pub))
 		reqBody, _ := json.Marshal(map[string]string{
 			"nickname":  cleanNick,
