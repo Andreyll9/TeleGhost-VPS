@@ -38,39 +38,38 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Fix Broken HTML Fragment in Sidebar.svelte
+      - name: Clean Leftover Tail in Chat.svelte
         run: |
-          cat << 'PYEOF' > fix_sidebar.py
+          cat << 'PYEOF' > fix_chat.py
           import os
 
-          sidebar_path = "frontend/src/components/Sidebar.svelte"
-          if os.path.exists(sidebar_path):
-              with open(sidebar_path, "r", encoding="utf-8") as f:
-                  sb = f.read()
+          chat_path = "frontend/src/components/Chat.svelte"
+          if os.path.exists(chat_path):
+              with open(chat_path, "r", encoding="utf-8") as f:
+                  ch = f.read()
 
-              # Вырезаем оборванный кусок старых модалок между концом десктопной ленты Сторис и <div class="contacts-list">
-              start_marker = '<span style="font-size: 11px; color: #9AA0A6; margin-top: 4px; max-width: 60px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{st.author}</span>\n            </div>\n        {/each}\n    </div>'
-              end_marker = '<div class="contacts-list">'
+              end_of_new_fn = "alert('Разрешите доступ к микрофону и камере в настройках Android: ' + err);\n                  }\n              }"
+              script_close = "</script>"
 
-              if start_marker in sb and end_marker in sb:
-                  idx1 = sb.find(start_marker) + len(start_marker)
-                  idx2 = sb.find(end_marker, idx1)
+              if end_of_new_fn in ch and script_close in ch:
+                  idx1 = ch.find(end_of_new_fn) + len(end_of_new_fn)
+                  idx2 = ch.find(script_close, idx1)
                   if idx2 != -1:
-                      sb = sb[:idx1] + "\n\n        " + sb[idx2:]
-                      with open(sidebar_path, "w", encoding="utf-8") as f:
-                          f.write(sb)
-                      print("[OK] Оборванный HTML-хвост в Sidebar.svelte успешно удалён")
+                      ch = ch[:idx1] + "\n</script>" + ch[idx2 + len(script_close):]
+                      with open(chat_path, "w", encoding="utf-8") as f:
+                          f.write(ch)
+                      print("[OK] Оборванный хвост в Chat.svelte перед </script> успешно удалён")
           PYEOF
-          python3 fix_sidebar.py
-          rm -f fix_sidebar.py
+          python3 fix_chat.py
+          rm -f fix_chat.py
 
-      - name: Commit clean Sidebar.svelte
+      - name: Commit clean Chat.svelte
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           if [ -n "$(git status --porcelain)" ]; then
             git add .
-            git commit -m "Clean leftover HTML fragment in Sidebar.svelte [skip ci]"
+            git commit -m "Remove leftover function tail in Chat.svelte [skip ci]"
             git pull --rebase origin main || true
             git push || true
           fi
