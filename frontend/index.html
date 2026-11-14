@@ -170,10 +170,10 @@
     var origFetch = window.fetch.bind(window);
     window.fetch = async function(url, opts) {
       var u = String(url);
-      if (u.indexOf('/api/') !== -1 && u.indexOf('/api/events') === -1 && u.indexOf('AppendDebugLog') === -1) {
+      if (u.indexOf('/api/') !== -1 && u.indexOf('/api/events') === -1 && u.indexOf('AppendDebugLog') === -1 && u.indexOf('GetNetworkStatus') === -1) {
         var mName = u.split('/api/')[1];
         var bodyStr = '';
-        try { bodyStr = (opts && opts.body ? String(opts.body) : '').slice(0, 140); } catch(e){}
+        try { bodyStr = (opts && opts.body ? String(opts.body) : '').slice(0, 600); } catch(e){}
         var t0 = Date.now();
         window.__addHydraLog('RPC-REQ', mName + ' ' + bodyStr);
         try {
@@ -190,7 +190,7 @@
             });
           } else {
             var resStr = '';
-            try { resStr = JSON.stringify(data.result).slice(0, 100); } catch(e){}
+            try { resStr = JSON.stringify(data.result).slice(0, 600); } catch(e){}
             window.__addHydraLog('RPC-OK', mName + ' (' + dt + 'ms) -> ' + resStr);
           }
           return resp;

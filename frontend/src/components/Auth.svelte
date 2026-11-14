@@ -100,9 +100,7 @@
                 alert('Открыт защищённый гостевой профиль');
                 return;
             }
-            if (selectedProfile?.id && pinInput) {
-                localStorage.setItem('hydra_bio_pin_' + selectedProfile.id, pinInput);
-            }
+            // ПИН для биометрии сохраняется только через аппаратный сканер BiometricPrompt
         if (!pinInput || !selectedProfile) return;
         isLoading = true;
         try {
@@ -269,19 +267,48 @@
         return clean;
     }
 
-    async function triggerBiometricUnlock() {
-        if (localStorage.getItem('hydra_biometric') === '0') return;
-        try {
-            const savedPin = (localStorage.getItem('hydra_bio_pin_' + (selectedProfile?.id || 'default')) || localStorage.getItem('hydra_bio_pin_default'));
-            if (savedPin) {
-                pinInput = savedPin;
+    let systemPermStatus = null;
+    let bioPromptStatus = '';
+
+    if (typeof window !== 'undefined') {
+        window.__onBiometricAuthResult = async (success, decryptedPin, message) => {
+            if (success && decryptedPin) {
+                bioPromptStatus = '✅ Отпечаток распознан! Вход...';
+                pinInput = decryptedPin;
                 await handleUnlock();
+            } else {
+                bioPromptStatus = message ? ('ℹ️ ' + message) : '';
             }
-        } catch (e) {
-            console.error(e);
+        };
+    }
+
+    function checkDevicePermissionsAndBio(profId) {
+        if (window.HydraNative && typeof window.HydraNative.checkSystemStatus === 'function') {
+            try {
+                const raw = window.HydraNative.checkSystemStatus(profId || 'default');
+                systemPermStatus = JSON.parse(raw);
+            } catch (e) {
+                if (window.__addHydraLog) window.__addHydraLog('SYS-CHECK-ERR', String(e));
+            }
         }
     }
 
+    async function triggerBiometricUnlock() {
+        const profId = selectedProfile?.id || 'default';
+        checkDevicePermissionsAndBio(profId);
+        if (localStorage.getItem('hydra_biometric') === '0') {
+            if (window.__addHydraLog) window.__addHydraLog('BIO-SKIP', 'Биометрия отключена переключателем в настройках');
+            return;
+        }
+        if (window.HydraNative && typeof window.HydraNative.authenticateBiometric === 'function') {
+            if (systemPermStatus && !systemPermStatus.biometricBound) {
+                bioPromptStatus = 'ℹ️ Отпечаток ещё не привязан (введите ПИН вручную и привяжите его в Настройки → Приватность)';
+                return;
+            }
+            bioPromptStatus = '👆 Приложите палец к сканеру...';
+            window.HydraNative.authenticateBiometric(profId);
+        }
+    }
 </script>
 
 <div class="login-screen bg-animated" in:fade={{duration: 400}} on:click={hideContextMenu}>
@@ -365,6 +392,21 @@
                 {/if}
             </div>
             <p class="login-subtitle">Введите ПИН для <b>{selectedProfile?.display_name}</b></p>
+            
+    {#if systemPermStatus}
+        <div style="margin-bottom: 12px; padding: 10px 12px; border-radius: 14px; background: rgba(138,180,248,0.08); border: 1px solid rgba(138,180,248,0.2); font-size: 11px; color: #E3E3E3; text-align: left;">
+            <div style="font-weight: 700; color: #8AB4F8; margin-bottom: 4px;">🛡️ Проверка безопасности ({systemPermStatus.device}):</div>
+            <div>📷 Камера: {systemPermStatus.camera ? '✅ Разрешено' : '⚠️ Нет доступа'} | 🎤 Микрофон: {systemPermStatus.microphone ? '✅ Разрешено' : '⚠️ Нет доступа'}</div>
+            <div>👆 Биометрия: {systemPermStatus.biometricBound ? '✅ Отпечаток привязан (активен)' : '⚪ Не привязан (вход по ПИН)'}</div>
+            {#if !systemPermStatus.camera || !systemPermStatus.microphone}
+                <button type="button" on:click={() => window.HydraNative?.requestMissingPermissions()} style="margin-top: 6px; background: #8AB4F8; color: #062E6F; border: none; border-radius: 100px; padding: 4px 10px; font-size: 11px; font-weight: 700;">Выдать разрешения</button>
+            {/if}
+        </div>
+    {/if}
+    {#if bioPromptStatus}
+        <div style="margin-bottom: 10px; font-size: 12px; color: #8AB4F8; font-weight: 600;">{bioPromptStatus}</div>
+    {/if}
+    
             <div class="pin-entry-box">
               <input 
                 type="password" 

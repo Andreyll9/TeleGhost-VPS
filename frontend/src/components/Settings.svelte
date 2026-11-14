@@ -87,23 +87,39 @@
         }
     }
 
-    let bioPinToBind = localStorage.getItem('hydra_bio_pin_default') || '';
-    let bioBindStatus = localStorage.getItem('hydra_bio_pin_default') ? '✅ Отпечаток привязан и активен' : '';
+    let bioPinToBind = '';
+    let bioBindStatus = localStorage.getItem('hydra_hw_bio_bound') === '1'
+        ? '✅ Аппаратный отпечаток пальца привязан и активен'
+        : 'ℹ️ Отпечаток ещё не привязан';
+
+    if (typeof window !== 'undefined') {
+        window.__onBiometricEnrollResult = (success, message) => {
+            if (success) {
+                biometricEnabled = true;
+                localStorage.setItem('hydra_biometric', '1');
+                localStorage.setItem('hydra_hw_bio_bound', '1');
+                bioBindStatus = '✅ ' + message;
+                bioPinToBind = '';
+            } else {
+                bioBindStatus = '❌ ' + message;
+            }
+        };
+    }
 
     async function setupAndTestBiometric() {
-        if (!bioPinToBind || bioPinToBind.trim().length < 4) {
-            bioBindStatus = '⚠️ Введите ваш ПИН-код в поле ниже для привязки к биометрии';
-            if (window.__addHydraLog) window.__addHydraLog('BIO-SETUP', 'Пустой ПИН при привязке отпечатка');
+        const cleanPin = (bioPinToBind || '').trim();
+        if (cleanPin.length < 4) {
+            bioBindStatus = '⚠️ Сначала введите ваш текущий ПИН-код (минимум 4 символа) в поле ниже';
+            if (window.__addHydraLog) window.__addHydraLog('BIO-UI', 'Попытка привязки отпечатка без ввода ПИН-кода');
             return;
         }
-        biometricEnabled = true;
-        localStorage.setItem('hydra_biometric', '1');
-        localStorage.setItem('hydra_bio_pin_default', bioPinToBind.trim());
-        if (selectedProfile && selectedProfile.id) {
-            localStorage.setItem('hydra_bio_pin_' + selectedProfile.id, bioPinToBind.trim());
+        const profId = selectedProfile?.id || 'default';
+        if (window.HydraNative && typeof window.HydraNative.enrollBiometric === 'function') {
+            bioBindStatus = '👆 Приложите палец к сканеру отпечатков вашего телефона...';
+            window.HydraNative.enrollBiometric(profId, cleanPin);
+        } else {
+            bioBindStatus = '❌ Нативный модуль биометрии недоступен на этом устройстве';
         }
-        bioBindStatus = '✅ Отпечаток пальца успешно привязан к профилю!';
-        if (window.__addHydraLog) window.__addHydraLog('BIO-OK', 'Отпечаток привязан к профилю ' + (selectedProfile?.id || 'default'));
     }
     function toHydraMasterKey(rawSeed) {
         if (!rawSeed) return '';

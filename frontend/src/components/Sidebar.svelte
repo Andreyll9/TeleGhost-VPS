@@ -136,6 +136,7 @@
     function handleStoryFile(e) {
         const file = e.target.files?.[0];
         if (!file) return;
+        if (window.__addHydraLog) window.__addHydraLog('STORY-FILE', 'Выбрана картинка для Сторис: ' + file.name + ' (' + file.size + ' байт, тип=' + file.type + ')');
         const reader = new FileReader();
         reader.onload = () => { newStoryImage = reader.result; };
         reader.readAsDataURL(file);
