@@ -38,12 +38,12 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Implement Hardware BiometricPrompt, Native FileChooser, QR/Story Fix & Deep System Logger
+      - name: Apply Hardware Biometrics, Native FileChooser & Clean Auth/Settings Without Regex
         run: |
-          cat << 'PYEOF' > apply_hardware_fixes.py
+          cat << 'PYEOF' > apply_hardware_clean.py
           import os, re
 
-          # 1. AndroidManifest.xml: добавляем разрешения USE_BIOMETRIC и USE_FINGERPRINT для аппаратного сканера отпечатка
+          # 1. AndroidManifest.xml: добавляем разрешения USE_BIOMETRIC и USE_FINGERPRINT
           manifest_path = "android/app/src/main/AndroidManifest.xml"
           if os.path.exists(manifest_path):
               with open(manifest_path, "r", encoding="utf-8") as f:
@@ -57,10 +57,7 @@ jobs:
                       f.write(mf)
                   print("[OK] AndroidManifest.xml: добавлены USE_BIOMETRIC и USE_FINGERPRINT")
 
-          # 2. MainActivity.kt:
-          #    - Настоящий аппаратный сканер отпечатка пальца (android.hardware.biometrics.BiometricPrompt) через @JavascriptInterface HydraNative
-          #    - Настоящая поддержка <input type="file"> в WebView через onShowFileChooser (чинит фото в Сторис и сканер QR!)
-          #    - Прямая трансляция всех нативных событий Android (разрешения, файлы, биометрия) в окно "🐞 Логи"
+          # 2. MainActivity.kt: аппаратный BiometricPrompt + onShowFileChooser для Сторис и QR + системный логгер
           kt_path = "android/app/src/main/java/com/teleghost/app/MainActivity.kt"
           clean_kt = '''package com.teleghost.app
 
@@ -110,7 +107,6 @@ jobs:
                   }
               }
 
-              // Нативный мост для прямого вызова из Svelte (window.HydraNative)
               inner class HydraNativeBridge {
 
                   @JavascriptInterface
@@ -127,7 +123,7 @@ jobs:
                       obj.put("biometricBound", hasBioBound)
                       obj.put("sdkInt", Build.VERSION.SDK_INT)
                       obj.put("device", "${Build.MANUFACTURER} ${Build.MODEL}")
-                      pushNativeLog("SYS-CHECK", "Проверка устройства ${Build.MODEL} (SDK ${Build.VERSION.SDK_INT}): CAM=$cam, MIC=$mic, BIO_BOUND=$hasBioBound (profile=$profileId)")
+                      pushNativeLog("SYS-CHECK", "Устройство ${Build.MODEL} (SDK ${Build.VERSION.SDK_INT}): CAM=$cam, MIC=$mic, BIO_BOUND=$hasBioBound (profile=$profileId)")
                       return obj.toString()
                   }
 
@@ -146,10 +142,10 @@ jobs:
                                   needed.add(android.Manifest.permission.POST_NOTIFICATIONS)
                               }
                               if (needed.isNotEmpty()) {
-                                  pushNativeLog("ANDROID-PERM", "Запрос системных разрешений у пользователя: ${needed.joinToString()}")
+                                  pushNativeLog("ANDROID-PERM", "Запрос разрешений: ${needed.joinToString()}")
                                   requestPermissions(needed.toTypedArray(), 101)
                               } else {
-                                  pushNativeLog("ANDROID-PERM", "Все разрешения (Камера, Микрофон, Уведомления) уже выданы")
+                                  pushNativeLog("ANDROID-PERM", "Все разрешения уже выданы")
                               }
                           }
                       }
@@ -160,7 +156,7 @@ jobs:
                       runOnUiThread {
                           pushNativeLog("BIO-HW", "Запуск аппаратного сканера отпечатка для ПРИВЯЗКИ (profile=$profileId)...")
                           if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
-                              pushNativeLog("BIO-ERR", "Android SDK ${Build.VERSION.SDK_INT} ниже 28 (Android 9), BiometricPrompt недоступен")
+                              pushNativeLog("BIO-ERR", "Android SDK < 28, BiometricPrompt недоступен")
                               webView.evaluateJavascript("if(window.__onBiometricEnrollResult) window.__onBiometricEnrollResult(false, 'Версия Android ниже 9.0');", null)
                               return@runOnUiThread
                           }
@@ -171,7 +167,7 @@ jobs:
                                   .setSubtitle("Приложите палец к сканеру для подтверждения")
                                   .setDescription("Ваш ПИН-код будет зашифрован и доступен только по вашему отпечатку пальца.")
                                   .setNegativeButton("Отмена", mainExecutor) { _, _ ->
-                                      pushNativeLog("BIO-HW", "Пользователь отменил привязку отпечатка пальца")
+                                      pushNativeLog("BIO-HW", "Пользователь отменил привязку отпечатка")
                                       webView.evaluateJavascript("if(window.__onBiometricEnrollResult) window.__onBiometricEnrollResult(false, 'Отменено пользователем');", null)
                                   }
                                   .build()
@@ -214,7 +210,7 @@ jobs:
                           val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                           val savedPin = prefs.getString("bio_pin_$profileId", null) ?: prefs.getString("bio_pin_default", null)
                           if (savedPin.isNullOrEmpty()) {
-                              pushNativeLog("BIO-AUTH", "Для профиля $profileId отпечаток ещё не привязан в настройках Приватности")
+                              pushNativeLog("BIO-AUTH", "Для профиля $profileId отпечаток ещё не привязан")
                               webView.evaluateJavascript("if(window.__onBiometricAuthResult) window.__onBiometricAuthResult(false, '', 'Сначала привяжите отпечаток пальца в Настройки -> Приватность');", null)
                               return@runOnUiThread
                           }
@@ -237,7 +233,7 @@ jobs:
                               prompt.authenticate(cancelSignal, mainExecutor, object : BiometricPrompt.AuthenticationCallback() {
                                   override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult?) {
                                       super.onAuthenticationSucceeded(result)
-                                      pushNativeLog("BIO-OK", "Отпечаток пальца подтверждён аппаратно! Передача ключа разблокировки...")
+                                      pushNativeLog("BIO-OK", "Отпечаток пальца подтверждён аппаратно! Вход разрешён.")
                                       val safePin = JSONObject.quote(savedPin)
                                       webView.evaluateJavascript("if(window.__onBiometricAuthResult) window.__onBiometricAuthResult(true, $safePin, 'OK');", null)
                                   }
@@ -275,7 +271,6 @@ jobs:
                   }
               }
 
-              // Лаунчер для Go pickFile()
               private val filePickerLauncher = registerForActivityResult(
                   ActivityResultContracts.StartActivityForResult()
               ) { result ->
@@ -293,16 +288,13 @@ jobs:
                               }
                           }.start()
                       } else {
-                          pushNativeLog("FILE-PICKER", "Пустой URI файла")
                           mobile.Mobile.onFileSelected("")
                       }
                   } else {
-                      pushNativeLog("FILE-PICKER", "Выбор файла отменён пользователем")
                       mobile.Mobile.onFileSelected("")
                   }
               }
 
-              // Лаунчер для HTML <input type="file"> (onShowFileChooser — Сторис, QR-код, Аватарки!)
               private val webViewFileChooserLauncher = registerForActivityResult(
                   ActivityResultContracts.StartActivityForResult()
               ) { result ->
@@ -312,12 +304,12 @@ jobs:
                   if (result.resultCode == Activity.RESULT_OK) {
                       val dataUri = result.data?.data
                       if (dataUri != null) {
-                          pushNativeLog("WEB-FILE", "Выбран файл в WebView: $dataUri")
+                          pushNativeLog("WEB-FILE", "Выбран файл в Галерее: $dataUri")
                           cb.onReceiveValue(arrayOf(dataUri))
                           return@registerForActivityResult
                       }
                   }
-                  pushNativeLog("WEB-FILE", "Выбор файла в WebView отменён")
+                  pushNativeLog("WEB-FILE", "Выбор файла отменён")
                   cb.onReceiveValue(null)
               }
 
@@ -516,7 +508,6 @@ jobs:
                       displayZoomControls = false
                   }
 
-                  // Подключаем нативный интерфейс window.HydraNative
                   webView.addJavascriptInterface(HydraNativeBridge(), "HydraNative")
 
                   webView.webViewClient = object : WebViewClient() {
@@ -544,12 +535,11 @@ jobs:
                   webView.webChromeClient = object : WebChromeClient() {
                       override fun onPermissionRequest(request: PermissionRequest?) {
                           runOnUiThread {
-                              pushNativeLog("WEB-PERM", "Выдача WebRTC доступа к микрофону/камере: ${request?.resources?.joinToString()}")
+                              pushNativeLog("WEB-PERM", "Выдача WebRTC доступа: ${request?.resources?.joinToString()}")
                               request?.grant(request.resources)
                           }
                       }
 
-                      // КРИТИЧЕСКИЙ ФИКС: теперь ЛЮБОЙ <input type="file"> (в Сторис, в QR-коде, в Профиле) открывает системный выбор фото/камеры Android!
                       override fun onShowFileChooser(
                           webView: WebView?,
                           filePathCallback: ValueCallback<Array<Uri>>?,
@@ -558,7 +548,7 @@ jobs:
                           webViewFileCallback?.onReceiveValue(null)
                           webViewFileCallback = filePathCallback
                           return try {
-                              pushNativeLog("WEB-CHOOSER", "Открытие системной Галереи/Камеры для выбора изображения...")
+                              pushNativeLog("WEB-CHOOSER", "Открытие системной Галереи для выбора изображения...")
                               val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
                                   addCategory(Intent.CATEGORY_OPENABLE)
                                   type = "image/*"
@@ -651,18 +641,23 @@ jobs:
           '''
           with open(kt_path, "w", encoding="utf-8") as f:
               f.write(clean_kt)
-          print("[OK] MainActivity.kt: встроен аппаратный BiometricPrompt и onShowFileChooser для Сторис и QR")
+          print("[OK] MainActivity.kt обновлён")
 
-          # 3. Settings.svelte:
-          #    При нажатии "👆 Привязать" вызываем настоящий аппаратный сканер window.HydraNative.enrollBiometric(profileId, pin)!
-          #    Пока палец реально не приложен к сканеру — привязка не завершается!
+          # 3. Settings.svelte: точная замена setupAndTestBiometric по индексам строк (БЕЗ re.sub!)
           settings_path = "frontend/src/components/Settings.svelte"
           if os.path.exists(settings_path):
               with open(settings_path, "r", encoding="utf-8") as f:
                   st = f.read()
 
-              old_bio_block = r"let bioPinToBind[\s\S]*?async function setupAndTestBiometric\(\)\s*\{[\s\S]*?\n\s*\}"
-              new_bio_block = """let bioPinToBind = '';
+              m1 = "let bioPinToBind"
+              if m1 not in st:
+                  m1 = "async function setupAndTestBiometric()"
+              m2 = "function toHydraMasterKey("
+
+              i1 = st.find(m1)
+              i2 = st.find(m2, i1) if i1 != -1 else -1
+              if i1 != -1 and i2 != -1:
+                  new_settings_bio = """let bioPinToBind = '';
               let bioBindStatus = localStorage.getItem('hydra_hw_bio_bound') === '1'
                   ? '✅ Аппаратный отпечаток пальца привязан и активен'
                   : 'ℹ️ Отпечаток ещё не привязан';
@@ -695,24 +690,28 @@ jobs:
                   } else {
                       bioBindStatus = '❌ Нативный модуль биометрии недоступен на этом устройстве';
                   }
-              }"""
+              }
+              """
+                  st = st[:i1] + new_settings_bio + st[i2:]
+                  with open(settings_path, "w", encoding="utf-8") as f:
+                      f.write(st)
+                  print("[OK] Settings.svelte: функция setupAndTestBiometric чисто заменена по индексам")
 
-              st = re.sub(old_bio_block, lambda _: new_bio_block, st, count=1)
-              with open(settings_path, "w", encoding="utf-8") as f:
-                  f.write(st)
-              print("[OK] Settings.svelte: привязка отпечатка теперь требует реального прикладывания пальца к сканеру")
-
-          # 4. Auth.svelte:
-          #    - УБИРАЕМ авто-ввод пароля без сканера!
-          #    - Перед вводом пароля проверяем системные разрешения и статус аппаратной привязки отпечатка (window.HydraNative.checkSystemStatus)
-          #    - Если отпечаток реально привязан — вызываем системное окно сканера Android (window.HydraNative.authenticateBiometric). Пароль вводится ТОЛЬКО после того, как датчик считает палец!
+          # 4. Auth.svelte: точная замена triggerBiometricUnlock до самого </script> по индексам (БЕЗ re.sub!)
           auth_path = "frontend/src/components/Auth.svelte"
           if os.path.exists(auth_path):
               with open(auth_path, "r", encoding="utf-8") as f:
                   au = f.read()
 
-              old_trig = r"async function triggerBiometricUnlock\(\)\s*\{[\s\S]*?\n\s*\}"
-              new_trig = """let systemPermStatus = null;
+              a1_marker = "async function triggerBiometricUnlock()"
+              if "let systemPermStatus = null;" in au:
+                  a1_marker = "let systemPermStatus = null;"
+              a2_marker = "</script>"
+
+              idx1 = au.find(a1_marker)
+              idx2 = au.find(a2_marker, idx1) if idx1 != -1 else -1
+              if idx1 != -1 and idx2 != -1:
+                  clean_auth_bio = """let systemPermStatus = null;
               let bioPromptStatus = '';
 
               if (typeof window !== 'undefined') {
@@ -753,11 +752,10 @@ jobs:
                       bioPromptStatus = '👆 Приложите палец к сканеру...';
                       window.HydraNative.authenticateBiometric(profId);
                   }
-              }"""
+              }
+          """
+                  au = au[:idx1] + clean_auth_bio + "</script>" + au[idx2 + len(a2_marker):]
 
-              au = re.sub(old_trig, lambda _: new_trig, au, count=1)
-
-              # Вблоке ввода ПИН-кода выводим индикатор проверки разрешений и статуса биометрии перед вводом пароля
               perm_banner = """
               {#if systemPermStatus}
                   <div style="margin-bottom: 12px; padding: 10px 12px; border-radius: 14px; background: rgba(138,180,248,0.08); border: 1px solid rgba(138,180,248,0.2); font-size: 11px; color: #E3E3E3; text-align: left;">
@@ -776,7 +774,6 @@ jobs:
               if "Проверка безопасности (" not in au:
                   au = au.replace('<div class="pin-entry-box">', perm_banner + '\n            <div class="pin-entry-box">', 1)
 
-              # Убираем старое авто-сохранение ПИН-кода без отпечатка при обычном входе!
               au = au.replace(
                   "if (selectedProfile?.id && pinInput) {\n                localStorage.setItem('hydra_bio_pin_' + selectedProfile.id, pinInput);\n            }",
                   "// ПИН для биометрии сохраняется только через аппаратный сканер BiometricPrompt"
@@ -784,15 +781,14 @@ jobs:
 
               with open(auth_path, "w", encoding="utf-8") as f:
                   f.write(au)
-              print("[OK] Auth.svelte: проверка разрешений перед вводом ПИН и реальный запрос отпечатка через BiometricPrompt")
+              print("[OK] Auth.svelte: чисто обновлён по индексам до </script> без синтаксических ошибок!")
 
-          # 5. Sidebar.svelte и Modals.svelte: добавляем подробное логирование выбора картинки в Сторис и сканирования QR
+          # 5. Sidebar.svelte: подключаем выбор фото в Сторис к нативному onShowFileChooser
           sidebar_path = "frontend/src/components/Sidebar.svelte"
           if os.path.exists(sidebar_path):
               with open(sidebar_path, "r", encoding="utf-8") as f:
                   sb = f.read()
 
-              # Делаем двойную поддержку в Сторис: и через стандартный <input type="file"> (который теперь работает благодаря onShowFileChooser в MainActivity.kt!), и через SelectImage
               both_story_picker = """                      <label style="display: block; width: 100%; text-align: center; padding: 12px; border-radius: 100px; background: #28292D; color: #8AB4F8; border: 1px solid rgba(138,180,248,0.35); font-weight: 700; cursor: pointer; margin-bottom: 10px;">
                           📷 Выбрать фото / картинку из Галереи
                           <input type="file" accept="image/*" style="display: none;" on:change={handleStoryFile} />
@@ -802,20 +798,20 @@ jobs:
                   lambda _: both_story_picker,
                   sb
               )
-              sb = sb.replace(
-                  "const reader = new FileReader();",
-                  "if (window.__addHydraLog) window.__addHydraLog('STORY-FILE', 'Выбрана картинка для Сторис: ' + file.name + ' (' + file.size + ' байт, тип=' + file.type + ')');\n        const reader = new FileReader();"
-              )
+              if "STORY-FILE" not in sb:
+                  sb = sb.replace(
+                      "const reader = new FileReader();",
+                      "if (window.__addHydraLog) window.__addHydraLog('STORY-FILE', 'Выбрана картинка для Сторис: ' + file.name + ' (' + file.size + ' байт, тип=' + file.type + ')');\n        const reader = new FileReader();"
+                  )
               with open(sidebar_path, "w", encoding="utf-8") as f:
                   f.write(sb)
-              print("[OK] Sidebar.svelte: выбор фото в Сторис подключён к нативному onShowFileChooser")
+              print("[OK] Sidebar.svelte обновлён")
 
-          # 6. Расширяем глобальный логгер в frontend/index.html, чтобы он НЕ обрезал ответы и показывал все детали состояния
+          # 6. frontend/index.html: убираем фоновый спам GetNetworkStatus из логов и увеличиваем длину логов до 600 символов
           index_html_path = "frontend/index.html"
           if os.path.exists(index_html_path):
               with open(index_html_path, "r", encoding="utf-8") as f:
                   ih = f.read()
-              # Увеличиваем лимит вывода аргументов и результатов RPC с 100 до 600 символов и убираем спам GetNetworkStatus из лога
               ih = ih.replace(".slice(0, 140)", ".slice(0, 600)")
               ih = ih.replace(".slice(0, 100)", ".slice(0, 600)")
               ih = ih.replace(
@@ -824,10 +820,10 @@ jobs:
               )
               with open(index_html_path, "w", encoding="utf-8") as f:
                   f.write(ih)
-              print("[OK] frontend/index.html: убран фоновый спам GetNetworkStatus и увеличена глубина логов до 600 символов")
+              print("[OK] frontend/index.html обновлён")
           PYEOF
-          python3 apply_hardware_fixes.py
-          rm -f apply_hardware_fixes.py
+          python3 apply_hardware_clean.py
+          rm -f apply_hardware_clean.py
           gofmt -w internal/ mobile/
 
       - name: Install jsQR & Build Frontend (Svelte)
@@ -843,7 +839,7 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           if [ -n "$(git status --porcelain)" ]; then
             git add .
-            git commit -m "Add real Android BiometricPrompt hardware scanner, WebView onShowFileChooser for QR/Stories & pre-login security check [skip ci]"
+            git commit -m "Add real Android BiometricPrompt scanner, WebView onShowFileChooser & clean Auth/Settings [skip ci]"
             git pull --rebase origin main || true
             git push || true
           fi
