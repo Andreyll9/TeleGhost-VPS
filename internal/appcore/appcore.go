@@ -657,10 +657,10 @@ func (a *AppCore) ConnectToI2P() {
 		}
 	}
 	if a.Router == nil {
-		a.Router = router.NewSAMRouter("191.223.137.164:8085")
+		a.Router = router.NewSAMRouter(nil)
 	}
 	if a.Identity != nil && a.Identity.Keys != nil {
-		a.Router.SetDestination(a.Identity.Keys.PublicKeyBase64)
+
 		router.SetGlobalPrivateKey(a.Identity.Keys.SigningPrivateKey)
 	}
 	a.Messenger = messenger.NewService(a.Router, a.Identity.Keys, a.OnMessageReceived)
