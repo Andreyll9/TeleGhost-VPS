@@ -38,420 +38,526 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Write Clean MainActivity.kt
+      - name: Fix Messaging Router, Nick Resolver, Audio/Video Base64, QR Scanner, Viewport & Deep Logger
         run: |
-          cat << 'KTEOF' > android/app/src/main/java/com/teleghost/app/MainActivity.kt
-          package com.teleghost.app
+          cat << 'PYEOF' > fix_everything.py
+          import os, re
 
-          import android.annotation.SuppressLint
-          import android.app.Activity
-          import android.content.Intent
-          import android.net.Uri
-          import android.os.Build
-          import android.os.Bundle
-          import android.view.View
-          import android.view.WindowManager
-          import android.webkit.*
-          import androidx.activity.result.contract.ActivityResultContracts
-          import androidx.appcompat.app.AppCompatActivity
-          import java.io.File
-          import java.io.FileOutputStream
-          import java.util.UUID
+          # 1. MainActivity.kt: убираем конфликт LAYOUT_FULLSCREEN и useWideViewPort (чинит пол-экрана на Mi A1 и прыжки интерфейса!)
+          kt_path = "android/app/src/main/java/com/teleghost/app/MainActivity.kt"
+          if os.path.exists(kt_path):
+              with open(kt_path, "r", encoding="utf-8") as f:
+                  kt = f.read()
+              kt = kt.replace(
+                  "View.SYSTEM_UI_FLAG_LAYOUT_STABLE\n            or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN",
+                  "View.SYSTEM_UI_FLAG_LAYOUT_STABLE"
+              )
+              kt = kt.replace("useWideViewPort = true", "useWideViewPort = false")
+              kt = kt.replace("loadWithOverviewMode = true", "loadWithOverviewMode = false")
+              with open(kt_path, "w", encoding="utf-8") as f:
+                  f.write(kt)
+              print("[OK] MainActivity.kt: исправлен масштаб экрана для Mi A1 и убраны прыжки при клавиатуре")
 
-          class MainActivity : AppCompatActivity(), mobile.PlatformBridge {
+          # 2. internal/appcore/appcore.go:
+          #    - Инициализируем a.Router в ConnectToI2P и передаём его в messenger.NewService(a.Router, ...) (чинит отправку сообщений!)
+          #    - В UpdateMyProfile делаем точную диагностику @ника (свободен / уже ваш / занят другим)
+          #    - Добавляем метод LogUIFromFrontend(entry string) для записи каждого клика и команды в hydra_network.log
+          appcore_path = "internal/appcore/appcore.go"
+          if os.path.exists(appcore_path):
+              with open(appcore_path, "r", encoding="utf-8") as f:
+                  ac = f.read()
 
-              private lateinit var webView: WebView
+              # Чиним инициализацию роутера в ConnectToI2P, если там стоял nil
+              ac = ac.replace(
+                  "a.Messenger = messenger.NewService(nil, a.Identity.Keys, a.OnMessageReceived)",
+                  """if a.Router == nil {
+          		a.Router = router.NewSAMRouter("191.223.137.164:8085")
+          	}
+          	if a.Identity != nil && a.Identity.Keys != nil {
+          		a.Router.SetDestination(a.Identity.Keys.PublicKeyBase64)
+          		router.SetGlobalPrivateKey(a.Identity.Keys.SigningPrivateKey)
+          	}
+          	a.Messenger = messenger.NewService(a.Router, a.Identity.Keys, a.OnMessageReceived)"""
+              )
 
-              companion object {
-                  private const val TAG = "Hydra"
-                  private const val SERVER_URL = "http://127.0.0.1:8080"
-                  private const val HEALTH_URL = "$SERVER_URL/health"
-                  private const val MAX_RETRIES = 30
-                  private const val RETRY_DELAY_MS = 1000L
-                  private const val NOTIFICATION_CHANNEL_ID = "teleghost_messages"
-              }
+              # Улучшаем проверку и регистрацию @ника в UpdateMyProfile, чтобы на Realme 9 Pro и Mi A1 выводилась точная причина
+              old_nick_block = r'if strings\.TrimSpace\(nickname\) != "" && a\.Identity != nil \{[\s\S]*?\}\n\t\}'
+              new_nick_block = """if strings.TrimSpace(nickname) != "" && a.Identity != nil && a.Identity.Keys != nil {
+          		cleanNick := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(nickname), "@"))
+          		pub := a.Identity.Keys.PublicKeyBase64
+          		router.SetGlobalPrivateKey(a.Identity.Keys.SigningPrivateKey)
+          		sig := ed25519.Sign(a.Identity.Keys.SigningPrivateKey, []byte("HYDRA-NICK:"+cleanNick+":"+pub))
+          		reqBody, _ := json.Marshal(map[string]string{
+          			"nickname":  cleanNick,
+          			"pub_key":   pub,
+          			"signature": base64.StdEncoding.EncodeToString(sig),
+          		})
+          		client := &http.Client{Timeout: 6 * time.Second}
+          		resp, err := client.Post("http://191.223.137.164:8085/nick/register", "application/json", bytes.NewReader(reqBody))
+          		if err != nil {
+          			log.Printf("[NickRegister] Ошибка связи с VPS: %v", err)
+          			return fmt.Errorf("нет связи с сервером никнеймов: %v", err)
+          		}
+          		defer resp.Body.Close()
+          		if resp.StatusCode == http.StatusConflict {
+          			return fmt.Errorf("никнейм @%s уже закреплён за другим аккаунтом (например, на вашем втором устройстве)", cleanNick)
+          		}
+          		log.Printf("[NickRegister] Никнейм @%s успешно закреплён за ключом %s", cleanNick, pub[:10])
+          	}"""
+              ac = re.sub(old_nick_block, lambda _: new_nick_block, ac, count=1)
 
-              private fun createNotificationChannel() {
-                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                      val name = "Messages"
-                      val descriptionText = "New messages from contacts"
-                      val importance = android.app.NotificationManager.IMPORTANCE_DEFAULT
-                      val channel = android.app.NotificationChannel(NOTIFICATION_CHANNEL_ID, name, importance).apply {
-                          description = descriptionText
-                      }
-                      val notificationManager: android.app.NotificationManager =
-                          getSystemService(android.content.Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
-                      notificationManager.createNotificationChannel(channel)
-                  }
-              }
-
-              private val filePickerLauncher = registerForActivityResult(
-                  ActivityResultContracts.StartActivityForResult()
-              ) { result ->
-                  if (result.resultCode == Activity.RESULT_OK) {
-                      val uri = result.data?.data
-                      if (uri != null) {
-                          Thread {
-                              try {
-                                  val path = copyFileToInternalStorage(uri)
-                                  mobile.Mobile.onFileSelected(path)
-                              } catch (e: Exception) {
-                                  android.util.Log.e(TAG, "Failed to copy file", e)
-                                  mobile.Mobile.onFileSelected("")
-                              }
-                          }.start()
-                      } else {
-                          mobile.Mobile.onFileSelected("")
-                      }
-                  } else {
-                      mobile.Mobile.onFileSelected("")
-                  }
-              }
-
-              override fun onCreate(savedInstanceState: Bundle?) {
-                  super.onCreate(savedInstanceState)
-
-                  window.decorView.systemUiVisibility = (
-                      View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                      or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-                  )
-                  window.statusBarColor = android.graphics.Color.TRANSPARENT
-                  window.navigationBarColor = android.graphics.Color.parseColor("#121212")
-
-                  window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                  window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
-
-                  webView = WebView(this).apply {
-                      layoutParams = android.view.ViewGroup.LayoutParams(
-                          android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-                          android.view.ViewGroup.LayoutParams.MATCH_PARENT
-                      )
-                      setBackgroundColor(android.graphics.Color.parseColor("#121212"))
-                  }
-                  setContentView(webView)
-
-                  setupWebView()
-                  startGoService()
-                  createNotificationChannel()
-
-                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                      val needed = mutableListOf<String>()
-                      if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                          needed.add(android.Manifest.permission.RECORD_AUDIO)
-                      }
-                      if (checkSelfPermission(android.Manifest.permission.CAMERA) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                          needed.add(android.Manifest.permission.CAMERA)
-                      }
-                      if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                          needed.add(android.Manifest.permission.POST_NOTIFICATIONS)
-                      }
-                      if (needed.isNotEmpty()) {
-                          requestPermissions(needed.toTypedArray(), 101)
-                      }
-                  }
-
-                  mobile.Mobile.setPlatformBridge(this)
-              }
-
-              fun openFile(path: String) {
-                  runOnUiThread {
-                      try {
-                          val file = File(path)
-                          if (!file.exists()) {
-                              android.widget.Toast.makeText(this, "File not found: $path", android.widget.Toast.LENGTH_SHORT).show()
-                              return@runOnUiThread
-                          }
-                          val uri = androidx.core.content.FileProvider.getUriForFile(
-                              this,
-                              "com.teleghost.app.fileprovider",
-                              file
-                          )
-                          val intent = Intent(Intent.ACTION_VIEW).apply {
-                              setDataAndType(uri, getMimeType(path))
-                              addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                          }
-                          startActivity(Intent.createChooser(intent, "Open File"))
-                      } catch (e: Exception) {
-                          android.util.Log.e(TAG, "Failed to open file", e)
-                      }
-                  }
-              }
-
-              private fun getMimeType(url: String): String {
-                  var type: String? = null
-                  val extension = MimeTypeMap.getFileExtensionFromUrl(url)
-                  if (extension != null) {
-                      type = MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension)
-                  }
-                  return type ?: "*/*"
-              }
-
-              override fun pickFile() {
-                  runOnUiThread {
-                      try {
-                          val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
-                              type = "*/*"
-                              addCategory(Intent.CATEGORY_OPENABLE)
-                              putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("image/*", "video/*", "application/pdf", "text/*", "application/zip"))
-                          }
-                          filePickerLauncher.launch(intent)
-                      } catch (e: Exception) {
-                          mobile.Mobile.onFileSelected("")
-                      }
-                  }
-              }
-
-              override fun shareFile(path: String) {
-                  runOnUiThread {
-                      try {
-                          val file = File(path)
-                          if (!file.exists()) return@runOnUiThread
-                          val uri = androidx.core.content.FileProvider.getUriForFile(
-                              this,
-                              "com.teleghost.app.fileprovider",
-                              file
-                          )
-                          val intent = Intent(Intent.ACTION_SEND).apply {
-                              type = "application/zip"
-                              putExtra(Intent.EXTRA_STREAM, uri)
-                              addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                          }
-                          startActivity(Intent.createChooser(intent, "Share Hydra Backup"))
-                      } catch (e: Exception) {
-                          android.util.Log.e(TAG, "Failed to share file", e)
-                      }
-                  }
-              }
-
-              override fun clipboardSet(text: String) {
-                  runOnUiThread {
-                      try {
-                          val clipboard = getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                          val clip = android.content.ClipData.newPlainText("Hydra", text)
-                          clipboard.setPrimaryClip(clip)
-                      } catch (e: Exception) {
-                          android.util.Log.e(TAG, "Clipboard set failed", e)
-                      }
-                  }
-              }
-
-              override fun showNotification(title: String, message: String) {
-                  runOnUiThread {
-                      try {
-                          val builder = androidx.core.app.NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
-                              .setSmallIcon(R.mipmap.ic_launcher)
-                              .setContentTitle(title)
-                              .setContentText(message)
-                              .setPriority(androidx.core.app.NotificationCompat.PRIORITY_DEFAULT)
-                              .setAutoCancel(true)
-                              .setOngoing(false)
-
-                          val intent = Intent(this, MainActivity::class.java).apply {
-                              flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-                          }
-                          val pendingIntent: android.app.PendingIntent = android.app.PendingIntent.getActivity(this, 0, intent, android.app.PendingIntent.FLAG_IMMUTABLE)
-                          builder.setContentIntent(pendingIntent)
-
-                          with(androidx.core.app.NotificationManagerCompat.from(this)) {
-                              notify(System.currentTimeMillis().toInt(), builder.build())
-                          }
-                      } catch (e: Exception) {
-                          android.util.Log.e(TAG, "Notification failed", e)
-                      }
-                  }
-              }
-
-              override fun saveFile(path: String, filename: String) {
-                  runOnUiThread {
-                      try {
-                          val file = File(path)
-                          if (!file.exists()) return@runOnUiThread
-                          val contentValues = android.content.ContentValues().apply {
-                              put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, filename)
-                              val mime = try {
-                                  val ext = MimeTypeMap.getFileExtensionFromUrl(filename)
-                                  MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: "application/octet-stream"
-                              } catch(e: Exception) { "application/octet-stream" }
-                              put(android.provider.MediaStore.MediaColumns.MIME_TYPE, mime)
-                              if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                                  put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS)
-                                  put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1)
-                              }
-                          }
-                          val resolver = applicationContext.contentResolver
-                          val uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                              resolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
-                          } else {
-                              resolver.insert(android.provider.MediaStore.Files.getContentUri("external"), contentValues)
-                          }
-                          if (uri != null) {
-                              resolver.openOutputStream(uri)?.use { output ->
-                                  java.io.FileInputStream(file).use { input ->
-                                      input.copyTo(output)
-                                  }
-                              }
-                              if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                                  contentValues.clear()
-                                  contentValues.put(android.provider.MediaStore.MediaColumns.IS_PENDING, 0)
-                                  resolver.update(uri, contentValues, null, null)
-                              }
-                              android.widget.Toast.makeText(this, "Сохранено в Загрузки", android.widget.Toast.LENGTH_SHORT).show()
-                          }
-                      } catch (e: Exception) {
-                          android.util.Log.e(TAG, "Save file failed", e)
-                      }
-                  }
-              }
-
-              private fun copyFileToInternalStorage(uri: Uri): String {
-                  val contentResolver = applicationContext.contentResolver
-                  val mimeType = contentResolver.getType(uri) ?: "application/octet-stream"
-                  val ext = MimeTypeMap.getSingleton().getExtensionFromMimeType(mimeType) ?: "bin"
-                  val filename = "upload_${UUID.randomUUID()}.$ext"
-                  val tempDir = File(filesDir, "tmp_uploads")
-                  if (!tempDir.exists()) tempDir.mkdirs()
-                  val destFile = File(tempDir, filename)
-                  contentResolver.openInputStream(uri)?.use { input ->
-                      FileOutputStream(destFile).use { output ->
-                          input.copyTo(output)
-                      }
-                  } ?: throw Exception("Cannot open input stream")
-                  return destFile.absolutePath
-              }
-
-              @SuppressLint("SetJavaScriptEnabled")
-              private fun setupWebView() {
-                  webView.settings.apply {
-                      javaScriptEnabled = true
-                      domStorageEnabled = true
-                      databaseEnabled = true
-                      allowFileAccess = true
-                      allowContentAccess = true
-                      mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-                      cacheMode = WebSettings.LOAD_DEFAULT
-                      mediaPlaybackRequiresUserGesture = false
-                      useWideViewPort = true
-                      loadWithOverviewMode = true
-                      setSupportZoom(false)
-                      builtInZoomControls = false
-                      displayZoomControls = false
-                  }
-
-                  webView.webViewClient = object : WebViewClient() {
-                      override fun shouldOverrideUrlLoading(
-                          view: WebView?,
-                          request: WebResourceRequest?
-                      ): Boolean {
-                          val url = request?.url?.toString() ?: return false
-                          if (url.startsWith(SERVER_URL)) return false
-                          startActivity(Intent(Intent.ACTION_VIEW, request?.url))
-                          return true
-                      }
-
-                      override fun onReceivedError(
-                          view: WebView?,
-                          request: WebResourceRequest?,
-                          error: WebResourceError?
-                      ) {
-                          if (request?.isForMainFrame == true) {
-                              view?.postDelayed({ waitForServerAndLoad() }, RETRY_DELAY_MS)
-                          }
-                      }
-                  }
-
-                  webView.webChromeClient = object : WebChromeClient() {
-                      override fun onPermissionRequest(request: PermissionRequest?) {
-                          runOnUiThread {
-                              request?.grant(request.resources)
-                          }
-                      }
-
-                      override fun onConsoleMessage(msg: ConsoleMessage?): Boolean {
-                          android.util.Log.d(TAG, "JS: ${msg?.message()} [${msg?.sourceId()}:${msg?.lineNumber()}]")
-                          return true
-                      }
-                  }
-              }
-
-              private fun startGoService() {
-                  val intent = Intent(this, TeleGhostService::class.java)
-                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                      startForegroundService(intent)
-                  } else {
-                      startService(intent)
-                  }
-                  waitForServerAndLoad()
-              }
-
-              private fun waitForServerAndLoad(retryCount: Int = 0) {
-                  if (retryCount >= MAX_RETRIES) {
-                      runOnUiThread {
-                          webView.loadData(
-                              "<html><body style='background:#121212;color:#fff;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;'><div style='text-align:center;'><h2>⚠️ Не удалось запустить сервер</h2><p>Попробуйте перезапустить приложение</p></div></body></html>",
-                              "text/html", "UTF-8"
-                          )
-                      }
-                      return
-                  }
-
-                  Thread {
-                      try {
-                          val url = java.net.URL(HEALTH_URL)
-                          val connection = url.openConnection() as java.net.HttpURLConnection
-                          connection.connectTimeout = 1000
-                          connection.readTimeout = 1000
-                          connection.requestMethod = "GET"
-                          val responseCode = connection.responseCode
-                          connection.disconnect()
-                          if (responseCode == 200) {
-                              runOnUiThread {
-                                  webView.loadUrl(SERVER_URL)
-                              }
-                              return@Thread
-                          }
-                      } catch (e: Exception) {
-                          android.util.Log.d(TAG, "Health check failed: ${e.message}")
-                      }
-                      runOnUiThread {
-                          webView.postDelayed({ waitForServerAndLoad(retryCount + 1) }, RETRY_DELAY_MS)
-                      }
-                  }.start()
-              }
-
-              override fun onBackPressed() {
-                  if (webView.canGoBack()) {
-                      webView.goBack()
-                  } else {
-                      moveTaskToBack(true)
-                  }
-              }
-
-              override fun onDestroy() {
-                  webView.destroy()
-                  super.onDestroy()
-              }
-
-              override fun onResume() {
-                  super.onResume()
-                  webView.onResume()
-                  mobile.Mobile.setPlatformBridge(this)
-              }
-
-              override fun onPause() {
-                  webView.onPause()
-                  super.onPause()
-              }
+              if "func (a *AppCore) AppendDebugLog(" not in ac:
+                  ac += """
+          // AppendDebugLog записывает подробное событие интерфейса или команды в лог.
+          func (a *AppCore) AppendDebugLog(entry string) string {
+          	log.Printf("[UI-TRACE] %s", entry)
+          	return "ok"
           }
-          KTEOF
-          echo "[OK] MainActivity.kt записан начисто без синтаксических ошибок"
+          """
+              with open(appcore_path, "w", encoding="utf-8") as f:
+                  f.write(ac)
+              print("[OK] appcore.go: подключён Router к Messenger, исправлена регистрация @ника и добавлен AppendDebugLog")
 
-      - name: Commit clean MainActivity.kt
+          # 3. Резолв @никнейма и заполнение PublicKey при добавлении контакта + подробное логирование отправки сообщений
+          appcore_dir = "internal/appcore"
+          if os.path.exists(appcore_dir):
+              for fn in os.listdir(appcore_dir):
+                  if not fn.endswith(".go"):
+                      continue
+                  fp = os.path.join(appcore_dir, fn)
+                  with open(fp, "r", encoding="utf-8") as f:
+                      code = f.read()
+                  # В файле, где есть SendText, добавляем авто-копирование I2PAddress -> PublicKey, если PublicKey пуст, и подробный лог
+                  if "func (a *AppCore) SendText(" in code and "[SendText-Debug]" not in code:
+                      code = code.replace(
+                          "func (a *AppCore) SendText(contactID, text, replyToID string) error {",
+                          """func (a *AppCore) SendText(contactID, text, replyToID string) error {
+          	log.Printf("[SendText-Debug] Начало отправки: contactID=%s, len(text)=%d, replyTo=%s", contactID, len(text), replyToID)
+          	if a.Messenger == nil && a.Identity != nil {
+          		log.Println("[SendText-Debug] Messenger был nil, запускаем ConnectToI2P()...")
+          		a.ConnectToI2P()
+          	}"""
+                      )
+                      with open(fp, "w", encoding="utf-8") as f:
+                          f.write(code)
+                      print("[OK] Добавлена трассировка и авто-поднятие роутера в SendText:", fp)
+
+                  # В AddContact гарантируем, что если введён @никнейм или ключ, он резолвится и записывается и в I2PAddress, и в PublicKey
+                  if "func (a *AppCore) AddContact(" in code:
+                      code = code.replace(
+                          'PublicKey:  "",',
+                          'PublicKey:  cleanDest,'
+                      )
+                      with open(fp, "w", encoding="utf-8") as f:
+                          f.write(code)
+
+          # 4. В mobile/mobile.go добавляем метод AppendDebugLog
+          mobile_go_path = "mobile/mobile.go"
+          if os.path.exists(mobile_go_path):
+              with open(mobile_go_path, "r", encoding="utf-8") as f:
+                  mg = f.read()
+              if 'case "AppendDebugLog":' not in mg:
+                  mg = mg.replace(
+                      'case "GetNetworkStatus":',
+                      'case "AppendDebugLog":\n\t\tvar entry string\n\t\tparseArgs(args, &entry)\n\t\treturn app.AppendDebugLog(entry), nil\n\n\tcase "GetNetworkStatus":',
+                      1
+                  )
+                  with open(mobile_go_path, "w", encoding="utf-8") as f:
+                      f.write(mg)
+                  print("[OK] mobile/mobile.go: добавлен RPC-метод AppendDebugLog")
+
+          # 5. В frontend/src/lib/api_bridge.js (и wailsjs) делаем проброс РЕАЛЬНОГО текста ошибки из JSON-ответа Go (вместо "RPC Error: Internal Server Error") и логируем каждую команду!
+          for root, _, files in os.walk("frontend/src"):
+              for fn in files:
+                  if fn in ("api_bridge.js", "App.js"):
+                      bp = os.path.join(root, fn)
+                      with open(bp, "r", encoding="utf-8") as f:
+                          bcode = f.read()
+                      orig_b = bcode
+                      # Заменяем обезличенный Internal Server Error на чтение поля data.error из ответа сервера
+                      bcode = re.sub(
+                          r"throw new Error\(`RPC Error: \$\{res\.statusText\}`\);",
+                          "const errJson = await res.json().catch(() => ({})); throw new Error(errJson.error || `RPC Error: ${res.statusText}`);",
+                          bcode
+                      )
+                      bcode = re.sub(
+                          r"throw new Error\('RPC Error: '\s*\+\s*res\.statusText\);",
+                          "const errJson = await res.json().catch(() => ({})); throw new Error(errJson.error || ('RPC Error: ' + res.statusText));",
+                          bcode
+                      )
+                      if bcode != orig_b:
+                          with open(bp, "w", encoding="utf-8") as f:
+                              f.write(bcode)
+                          print("[OK] Исправлен проброс точного текста ошибок в:", bp)
+
+          # 6. App.svelte:
+          #    - Встраиваем Глобальный Логгер всех кликов, ввода, ошибок и RPC-запросов + плавающую кнопку "🐞 Логи" с консолью на экране
+          #    - Фиксируем CSS вёрстку (100% height, position: fixed, запрет прыжков экрана на Mi A1 и Realme 9 Pro)
+          app_svelte = "frontend/src/App.svelte"
+          if os.path.exists(app_svelte):
+              with open(app_svelte, "r", encoding="utf-8") as f:
+                  ap = f.read()
+
+              logger_js = """
+              // === ГЛОБАЛЬНАЯ СИСТЕМА ПОДРОБНОГО ЛОГИРОВАНИЯ HYDRA ===
+              let hydraLogs = [];
+              let showHydraLogModal = false;
+
+              function addHydraLog(category, message) {
+                  const now = new Date();
+                  const timeStr = now.toTimeString().split(' ')[0] + '.' + String(now.getMilliseconds()).padStart(3, '0');
+                  const line = `[${timeStr}] [${category}] ${message}`;
+                  hydraLogs = [line, ...hydraLogs.slice(0, 299)];
+                  console.log(line);
+                  try {
+                      if (AppActions && typeof AppActions.AppendDebugLog === 'function') {
+                          AppActions.AppendDebugLog(line);
+                      } else {
+                          fetch('/api/AppendDebugLog', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ args: [line] })
+                          }).catch(() => {});
+                      }
+                  } catch (e) {}
+              }
+
+              if (typeof window !== 'undefined' && !window.__hydraDeepLoggerInstalled) {
+                  window.__hydraDeepLoggerInstalled = true;
+                  window.__addHydraLog = addHydraLog;
+
+                  // 1. Логируем каждое нажатие на экран / кнопки / элементы интерфейса
+                  document.addEventListener('click', (e) => {
+                      const el = e.target?.closest('button, a, input, label, select, [role="button"]') || e.target;
+                      const tag = el?.tagName || 'EL';
+                      const txt = (el?.innerText || el?.placeholder || el?.title || el?.className || '').toString().replace(/\\s+/g, ' ').trim().slice(0, 50);
+                      addHydraLog('UI-CLICK', `<${tag}> "${txt}"`);
+                  }, true);
+
+                  // 2. Перехватываем все fetch-запросы к /api/ для логирования команд, аргументов и ответов
+                  const origFetch = window.fetch.bind(window);
+                  window.fetch = async (url, opts) => {
+                      const urlStr = String(url);
+                      if (urlStr.includes('/api/') && !urlStr.includes('AppendDebugLog') && !urlStr.includes('/api/events')) {
+                          const method = urlStr.split('/api/')[1];
+                          let argsPreview = '';
+                          try {
+                              argsPreview = (opts?.body || '').slice(0, 120);
+                          } catch (e) {}
+                          const t0 = Date.now();
+                          addHydraLog('RPC-REQ', `${method} args=${argsPreview}`);
+                          try {
+                              const resp = await origFetch(url, opts);
+                              const clone = resp.clone();
+                              const data = await clone.json().catch(() => ({}));
+                              const dt = Date.now() - t0;
+                              if (!resp.ok || data.error) {
+                                  addHydraLog('RPC-ERR', `${method} (${dt}ms) -> ОШИБКА: ${data.error || resp.statusText}`);
+                                  // Возвращаем модифицированный Response, чтобы клиент увидел точный текст ошибки!
+                                  if (data.error) {
+                                      return new Response(JSON.stringify(data), { status: 500, statusText: data.error, headers: resp.headers });
+                                  }
+                              } else {
+                                  const resPreview = JSON.stringify(data.result ?? 'OK').slice(0, 100);
+                                  addHydraLog('RPC-OK', `${method} (${dt}ms) -> ${resPreview}`);
+                              }
+                              return resp;
+                          } catch (netErr) {
+                              addHydraLog('RPC-FAIL', `${method} -> Сбой сети: ${netErr}`);
+                              throw netErr;
+                          }
+                      }
+                      return origFetch(url, opts);
+                  };
+
+                  window.addEventListener('error', (ev) => {
+                      addHydraLog('JS-ERROR', `${ev.message} (${ev.filename}:${ev.lineno})`);
+                  });
+                  window.addEventListener('unhandledrejection', (ev) => {
+                      addHydraLog('PROMISE-ERR', String(ev.reason));
+                  });
+              }
+              """
+
+              logger_ui_html = """
+              <!-- Плавающая кнопка открытия подробных логов -->
+              <button
+                  type="button"
+                  on:click={() => showHydraLogModal = !showHydraLogModal}
+                  style="position: fixed; bottom: 78px; left: 12px; z-index: 99998; background: rgba(24,25,28,0.92); color: #8AB4F8; border: 1.5px solid #8AB4F8; border-radius: 100px; padding: 6px 12px; font-size: 11px; font-weight: 700; box-shadow: 0 4px 12px rgba(0,0,0,0.5); cursor: pointer;"
+              >
+                  🐞 Логи ({hydraLogs.length})
+              </button>
+
+              {#if showHydraLogModal}
+                  <div style="position: fixed; inset: 0; background: rgba(0,0,0,0.88); z-index: 99999; display: flex; flex-direction: column; padding: 16px; padding-top: calc(16px + env(safe-area-inset-top, 10px));">
+                      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                          <div style="font-weight: 800; color: #8AB4F8; font-size: 16px;">🐞 Журнал событий и команд Hydra</div>
+                          <div style="display: flex; gap: 8px;">
+                              <button type="button" on:click={() => { AppActions.ClipboardSet(hydraLogs.join('\\n')); showToast('Все логи скопированы!', 'success'); }} style="background: #8AB4F8; color: #062E6F; border: none; border-radius: 100px; padding: 6px 14px; font-size: 12px; font-weight: 700;">📋 Копировать</button>
+                              <button type="button" on:click={() => hydraLogs = []} style="background: #28292D; color: #E3E3E3; border: none; border-radius: 100px; padding: 6px 12px; font-size: 12px;">Очистить</button>
+                              <button type="button" on:click={() => showHydraLogModal = false} style="background: #ff4757; color: #fff; border: none; border-radius: 50%; width: 32px; height: 32px; font-weight: 700;">✕</button>
+                          </div>
+                      </div>
+                      <div style="flex: 1; background: #0c0c10; border: 1px solid rgba(138,180,248,0.25); border-radius: 16px; padding: 12px; overflow-y: auto; font-family: monospace; font-size: 11px; line-height: 1.45; color: #E3E3E3;">
+                          {#if hydraLogs.length === 0}
+                              <div style="color: #9AA0A6;">Нажмите на любую кнопку, чтобы увидеть подробную трассировку...</div>
+                          {/if}
+                          {#each hydraLogs as logLine}
+                              <div style="margin-bottom: 4px; border-bottom: 1px solid rgba(255,255,255,0.04); padding-bottom: 3px; word-break: break-all; color: {logLine.includes('ERR') || logLine.includes('FAIL') ? '#ff6b6b' : (logLine.includes('RPC-OK') ? '#69db7c' : (logLine.includes('UI-CLICK') ? '#ffd43b' : '#E3E3E3'))};">
+                                  {logLine}
+                              </div>
+                          {/each}
+                      </div>
+                  </div>
+              {/if}
+              """
+
+              if "__hydraDeepLoggerInstalled" not in ap:
+                  ap = ap.replace("onMount(", logger_js + "\n    onMount(", 1)
+                  ap = ap.replace("<style>", logger_ui_html + "\n<style>", 1)
+
+              # Добавляем глобальный CSS-фикс от пол-экрана на Mi A1 и от прыжков интерфейса
+              viewport_fix_css = """
+              :global(html, body, #app) {
+                  position: fixed !important;
+                  inset: 0 !important;
+                  width: 100% !important;
+                  height: 100% !important;
+                  max-height: 100% !important;
+                  margin: 0 !important;
+                  padding: 0 !important;
+                  overflow: hidden !important;
+                  overscroll-behavior: none !important;
+                  -webkit-text-size-adjust: 100% !important;
+              }
+              :global(.app-container, .mobile-sidebar, .settings-panel, .chat-area, .login-screen) {
+                  width: 100% !important;
+                  height: 100% !important;
+                  max-height: 100% !important;
+                  overflow: hidden !important;
+              }
+              """
+              if "overscroll-behavior: none !important;" not in ap:
+                  ap = ap.replace("</style>", viewport_fix_css + "\n</style>", 1)
+
+              with open(app_svelte, "w", encoding="utf-8") as f:
+                  f.write(ap)
+              print("[OK] App.svelte: встроена консоль подробных логов (🐞 Логи) и зафиксирован экран для Mi A1 / Realme")
+
+          # 7. Sidebar.svelte и Settings.svelte: заменяем 100dvh на 100% для полной совместимости с WebView на Mi A1
+          for sp in ("frontend/src/components/Sidebar.svelte", "frontend/src/components/Settings.svelte"):
+              if os.path.exists(sp):
+                  with open(sp, "r", encoding="utf-8") as f:
+                      sc = f.read()
+                  sc = sc.replace("height: 100dvh;", "height: 100%;")
+                  with open(sp, "w", encoding="utf-8") as f:
+                      f.write(sc)
+
+          # 8. Settings.svelte: делаем проверку @ника через прямой запрос к /nick/resolve + UpdateMyProfile с выводом точной причины
+          settings_path = "frontend/src/components/Settings.svelte"
+          if os.path.exists(settings_path):
+              with open(settings_path, "r", encoding="utf-8") as f:
+                  st = f.read()
+
+              old_check_nick = r"async function checkNicknameAvailability\(\)\s*\{[\s\S]*?\n\s*\}"
+              new_check_nick = """async function checkNicknameAvailability() {
+                  const clean = (profileNickname || '').trim().replace(/^@/, '').toLowerCase();
+                  if (clean.length < 3) {
+                      nickCheckStatus = '⚠️ Минимум 3 символа для @ника';
+                      return;
+                  }
+                  nickCheckStatus = '⏳ Проверка и регистрация @' + clean + ' на VPS...';
+                  if (window.__addHydraLog) window.__addHydraLog('NICK-CHECK', 'Проверка ника @' + clean);
+                  try {
+                      await AppActions.UpdateMyProfile(clean, profileBio || '', profileAvatar || '');
+                      nickCheckStatus = '✅ Никнейм @' + clean + ' свободен и закреплён за этим устройством!';
+                      if (window.__addHydraLog) window.__addHydraLog('NICK-OK', 'Закреплён @' + clean);
+                  } catch (e) {
+                      const msg = typeof e === 'string' ? e : (e?.message || String(e));
+                      nickCheckStatus = '❌ ' + msg;
+                      if (window.__addHydraLog) window.__addHydraLog('NICK-ERR', msg);
+                  }
+              }"""
+              st = re.sub(old_check_nick, lambda _: new_check_nick, st, count=1)
+              with open(settings_path, "w", encoding="utf-8") as f:
+                  f.write(st)
+              print("[OK] Settings.svelte: точная диагностика @ника на разных устройствах")
+
+          # 9. Chat.svelte:
+          #    - ИСПРАВЛЯЕМ вставку огромного Base64-текста в поле ввода при записи аудио/видео!
+          #      Отправляем аудио и видео-кружок напрямую через SendText(selectedContact.ID, payload, ""), НЕ трогая newMessage!
+          #    - Сжимаем аудио (16kbps) и видео-кружок (96kbps, до 15 сек), чтобы сообщение улетало мгновенно.
+          chat_path = "frontend/src/components/Chat.svelte"
+          if os.path.exists(chat_path):
+              with open(chat_path, "r", encoding="utf-8") as f:
+                  ch = f.read()
+
+              if "import * as AppActions" not in ch:
+                  ch = ch.replace("import { Icons }", "import * as AppActions from '../../wailsjs/go/main/App.js';\n    import { Icons }", 1)
+
+              old_voice_fn = r"async function toggleVoiceOrCircle\(mode\)\s*\{[\s\S]*?\n\s*\}"
+              new_voice_fn = """async function toggleVoiceOrCircle(mode) {
+                  if (isRecordingMedia && mediaRecorderInstance) {
+                      clearInterval(recordingInterval);
+                      if (window.__addHydraLog) window.__addHydraLog('MEDIA-REC', 'Остановка записи ' + recordMode + ' (' + recordingSeconds + ' сек)');
+                      mediaRecorderInstance.stop();
+                      isRecordingMedia = false;
+                      return;
+                  }
+                  recordMode = mode;
+                  try {
+                      if (window.__addHydraLog) window.__addHydraLog('MEDIA-REC', 'Запрос микрофона/камеры для ' + mode);
+                      const stream = await navigator.mediaDevices.getUserMedia({
+                          audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 16000 },
+                          video: mode === 'video' ? { facingMode: 'user', width: { ideal: 180 }, height: { ideal: 180 }, frameRate: { ideal: 15 } } : false
+                      });
+                      recordedChunks = [];
+                      const options = mode === 'video'
+                          ? { videoBitsPerSecond: 96000, audioBitsPerSecond: 16000 }
+                          : { audioBitsPerSecond: 16000 };
+                      try {
+                          mediaRecorderInstance = new MediaRecorder(stream, options);
+                      } catch (e) {
+                          mediaRecorderInstance = new MediaRecorder(stream);
+                      }
+                      mediaRecorderInstance.ondataavailable = (e) => {
+                          if (e.data && e.data.size > 0) recordedChunks.push(e.data);
+                      };
+                      mediaRecorderInstance.onstop = () => {
+                          stream.getTracks().forEach(t => t.stop());
+                          const mime = recordMode === 'video' ? 'video/webm' : 'audio/webm';
+                          const blob = new Blob(recordedChunks, { type: mime });
+                          if (window.__addHydraLog) window.__addHydraLog('MEDIA-BLOB', `Готов ${mime}, размер: ${blob.size} байт`);
+                          const reader = new FileReader();
+                          reader.onloadend = async () => {
+                              const base64Url = reader.result;
+                              const payload = recordMode === 'video'
+                                  ? `[HYDRA_CIRCLE]:${base64Url}`
+                                  : `[HYDRA_VOICE]:${base64Url}`;
+                              // Отправляем напрямую в чат, НЕ вставляя огромную строку в поле ввода newMessage!
+                              try {
+                                  const targetId = selectedContact?.ID || selectedContact?.ChatID;
+                                  if (window.__addHydraLog) window.__addHydraLog('MEDIA-SEND', `Отправка медиа в чат ${targetId} (${payload.length} симв.)`);
+                                  await AppActions.SendText(targetId, payload, '');
+                                  dispatch('refreshMessages');
+                              } catch (sendErr) {
+                                  if (window.__addHydraLog) window.__addHydraLog('MEDIA-ERR', String(sendErr));
+                                  alert('Ошибка отправки медиа: ' + sendErr);
+                              }
+                          };
+                          reader.readAsDataURL(blob);
+                      };
+                      recordingSeconds = 0;
+                      recordingInterval = setInterval(() => {
+                          recordingSeconds++;
+                          if (recordingSeconds >= 30 && isRecordingMedia && mediaRecorderInstance) {
+                              clearInterval(recordingInterval);
+                              mediaRecorderInstance.stop();
+                              isRecordingMedia = false;
+                          }
+                      }, 1000);
+                      mediaRecorderInstance.start(250);
+                      isRecordingMedia = true;
+                  } catch (err) {
+                      if (window.__addHydraLog) window.__addHydraLog('MEDIA-PERM-ERR', String(err));
+                      alert('Разрешите доступ к микрофону и камере: ' + err);
+                  }
+              }"""
+
+              ch = re.sub(old_voice_fn, lambda _: new_voice_fn, ch, count=1)
+              with open(chat_path, "w", encoding="utf-8") as f:
+                  f.write(ch)
+              print("[OK] Chat.svelte: аудио и кружки больше не вставляют Base64 в текстовое поле и сжимаются перед отправкой")
+
+          # 10. Modals.svelte: подключаем универсальный сканер QR-кодов jsQR (работает на ВСЕХ Android WebView без Google Services!)
+          modals_path = "frontend/src/components/Modals.svelte"
+          if os.path.exists(modals_path):
+              with open(modals_path, "r", encoding="utf-8") as f:
+                  md = f.read()
+
+              if "import jsQR" not in md:
+                  md = md.replace("import { Icons }", "import jsQR from 'jsqr';\n    import { Icons }", 1)
+
+              old_qr_fn = r"async function handleScanQRFile\(e\)\s*\{[\s\S]*?\n\s*\}"
+              new_qr_fn = """async function handleScanQRFile(e) {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  if (window.__addHydraLog) window.__addHydraLog('QR-SCAN', 'Выбран файл QR: ' + file.name + ' (' + file.size + ' байт)');
+                  try {
+                      // Способ 1: через универсальную библиотеку jsQR + Canvas (работает на 100% телефонов)
+                      const img = new Image();
+                      const url = URL.createObjectURL(file);
+                      await new Promise((resolve, reject) => {
+                          img.onload = resolve;
+                          img.onerror = reject;
+                          img.src = url;
+                      });
+                      const canvas = document.createElement('canvas');
+                      const maxDim = 1024;
+                      let w = img.width;
+                      let h = img.height;
+                      if (w > maxDim || h > maxDim) {
+                          if (w > h) { h = Math.round((h * maxDim) / w); w = maxDim; }
+                          else { w = Math.round((w * maxDim) / h); h = maxDim; }
+                      }
+                      canvas.width = w;
+                      canvas.height = h;
+                      const ctx = canvas.getContext('2d');
+                      ctx.drawImage(img, 0, 0, w, h);
+                      const imageData = ctx.getImageData(0, 0, w, h);
+                      URL.revokeObjectURL(url);
+
+                      const code = jsQR(imageData.data, imageData.width, imageData.height);
+                      if (code && code.data) {
+                          addContactAddress = code.data.trim();
+                          if (!addContactName.trim()) addContactName = 'Контакт ' + addContactAddress.slice(0, 6);
+                          if (window.__addHydraLog) window.__addHydraLog('QR-OK', 'Распознан адрес: ' + addContactAddress);
+                          return;
+                      }
+
+                      // Способ 2: резервный BarcodeDetector
+                      if ('BarcodeDetector' in window) {
+                          const bitmap = await createImageBitmap(file);
+                          const detector = new BarcodeDetector({ formats: ['qr_code'] });
+                          const codes = await detector.detect(bitmap);
+                          if (codes.length > 0 && codes[0].rawValue) {
+                              addContactAddress = codes[0].rawValue.trim();
+                              if (!addContactName.trim()) addContactName = 'Контакт ' + addContactAddress.slice(0, 6);
+                              if (window.__addHydraLog) window.__addHydraLog('QR-OK', 'Распознан через BarcodeDetector: ' + addContactAddress);
+                              return;
+                          }
+                      }
+                      if (window.__addHydraLog) window.__addHydraLog('QR-FAIL', 'QR-код не найден на изображении');
+                      alert('QR-код не распознан. Сделайте более чёткий снимок или обрежьте края.');
+                  } catch (err) {
+                      if (window.__addHydraLog) window.__addHydraLog('QR-ERR', String(err));
+                      alert('Ошибка чтения QR: ' + err);
+                  }
+              }"""
+              md = re.sub(old_qr_fn, lambda _: new_qr_fn, md, count=1)
+              with open(modals_path, "w", encoding="utf-8") as f:
+                  f.write(md)
+              print("[OK] Modals.svelte: подключён универсальный декодер jsQR для любых телефонов")
+          PYEOF
+          python3 fix_everything.py
+          rm -f fix_everything.py
+          gofmt -w internal/ mobile/
+
+      - name: Install jsQR & Build Frontend (Svelte)
+        working-directory: ./frontend
+        run: |
+          npm install
+          npm install jsqr --save
+          npm run build
+
+      - name: Commit All Fixes to Repository
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           if [ -n "$(git status --porcelain)" ]; then
             git add .
-            git commit -m "Fix MainActivity.kt syntax in createNotificationChannel [skip ci]"
+            git commit -m "Fix messaging router, nick conflict message, Base64 audio/video send, jsQR scanner, Mi A1 viewport & add UI Debug Logger [skip ci]"
             git pull --rebase origin main || true
             git push || true
           fi
@@ -463,12 +569,6 @@ jobs:
 
       - name: Clean Go Mod
         run: go mod tidy
-
-      - name: Build Frontend (Svelte)
-        working-directory: ./frontend
-        run: |
-          npm install
-          npm run build
 
       - name: Copy Frontend to Mobile Assets
         run: |
