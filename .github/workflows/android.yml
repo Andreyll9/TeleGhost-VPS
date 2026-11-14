@@ -43,17 +43,15 @@ jobs:
           cat << 'PYEOF' > apply_guaranteed_fixes.py
           import os, re
 
-          # 1. Встраиваем НЕУБИВАЕМУЮ консоль логов (🐞 Логи) прямо в frontend/index.html,
-          #    чтобы она работала поверх ВСЕХ экранов (включая вход, настройки и чаты) и перехватывала все клики и /api/ запросы!
+          # 1. Встраиваем НЕУБИВАЕМУЮ консоль логов (🐞 Логи) прямо в frontend/index.html
           index_html_path = "frontend/index.html"
           if os.path.exists(index_html_path):
               with open(index_html_path, "r", encoding="utf-8") as f:
                   idx_html = f.read()
 
-              # Удаляем старый скрипт логгера, если был
               idx_html = re.sub(r'<!-- HYDRA_LOGGER_START -->[\s\S]*?<!-- HYDRA_LOGGER_END -->', '', idx_html)
 
-              hydra_logger_ html = """<!-- HYDRA_LOGGER_START -->
+              hydra_logger_html = """<!-- HYDRA_LOGGER_START -->
           <style>
             html, body, #app {
               position: fixed !important;
@@ -140,11 +138,12 @@ jobs:
                 if (panel && panel.style.display === 'flex') renderLogList();
               };
 
-              document.addEventListener('DOMContentLoaded', function() {
+              function mountLoggerButton() {
+                if (document.getElementById('hydra-debug-btn')) return;
                 var btn = document.createElement('button');
                 btn.id = 'hydra-debug-btn';
                 btn.type = 'button';
-                btn.textContent = '🐞 Логи (0)';
+                btn.textContent = '🐞 Логи (' + window.__hydraLogList.length + ')';
 
                 var panel = document.createElement('div');
                 panel.id = 'hydra-debug-panel';
@@ -190,9 +189,15 @@ jobs:
                 });
 
                 window.__addHydraLog('INIT', 'Интерфейс загружен, экран=' + window.innerWidth + 'x' + window.innerHeight);
-              });
+              }
 
-              // Перехват всех кликов
+              if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', mountLoggerButton);
+              } else {
+                mountLoggerButton();
+              }
+              setTimeout(mountLoggerButton, 1000);
+
               document.addEventListener('click', function(e) {
                 var t = e.target;
                 if (!t || (t.id && t.id.indexOf('hydra-') === 0)) return;
@@ -201,7 +206,6 @@ jobs:
                 window.__addHydraLog('CLICK', '<' + (el.tagName || 'EL') + '> "' + txt + '"');
               }, true);
 
-              // Перехват всех RPC-вызовов к Go (/api/...) и проброс ТОЧНОГО текста ошибки из Go!
               var origFetch = window.fetch.bind(window);
               window.fetch = async function(url, opts) {
                 var u = String(url);
@@ -252,7 +256,7 @@ jobs:
                   f.write(idx_html)
               print("[OK] frontend/index.html: встроен глобальный оверлей '🐞 Логи' поверх всех экранов!")
 
-          # 2. Исправляем frontend/src/lib/api_bridge.js, чтобы при получении { error: "..." } выбрасывался именно текст data.error!
+          # 2. Исправляем api_bridge.js / App.js для проброса точного текста ошибки из поля data.error
           for root, _, files in os.walk("frontend/src"):
               for fn in files:
                   if fn in ("api_bridge.js", "App.js"):
@@ -267,9 +271,7 @@ jobs:
                       with open(bp, "w", encoding="utf-8") as f:
                           f.write(bc)
 
-          # 3. Исправляем internal/appcore/appcore.go:
-          #    - Подключаем a.Router к messenger.NewService (для работы переписки между 2 телефонами!)
-          #    - В UpdateMyProfile делаем мягкую регистрацию @ника: если VPS вернул 409, проверяем /nick/resolve — если это уже наш ключ, то всё ОК, а если чужой — пишем точное сообщение, но профиль локально сохраняем!
+          # 3. Исправляем internal/appcore/appcore.go (Router для переписки + точная проверка @ника)
           appcore_path = "internal/appcore/appcore.go"
           if os.path.exists(appcore_path):
               with open(appcore_path, "r", encoding="utf-8") as f:
@@ -287,7 +289,6 @@ jobs:
           	a.Messenger = messenger.NewService(a.Router, a.Identity.Keys, a.OnMessageReceived)"""
               )
 
-              # Находим начало UpdateMyProfile и заменяем блок проверки ника до log.Printf("[AppCore] Updating profile
               start_up = "func (a *AppCore) UpdateMyProfile(nickname, bio, avatar string) error {"
               end_up = 'log.Printf("[AppCore] Updating profile:'
               if start_up in ac and end_up in ac:
@@ -313,7 +314,7 @@ jobs:
           		bodyBytes, _ := io.ReadAll(resp.Body)
           		resp.Body.Close()
           		if resp.StatusCode == http.StatusConflict {
-          			return fmt.Errorf("никнейм @%s уже занят другим устройством/аккаунтом (ответ VPS: %s)", cleanNick, strings.TrimSpace(string(bodyBytes)))
+          			return fmt.Errorf("никнейм @%s уже занят другим аккаунтом (ответ VPS: %s)", cleanNick, strings.TrimSpace(string(bodyBytes)))
           		}
           		if resp.StatusCode != http.StatusOK {
           			return fmt.Errorf("сервер отклонил никнейм @%s (код %d: %s)", cleanNick, resp.StatusCode, strings.TrimSpace(string(bodyBytes)))
@@ -323,10 +324,9 @@ jobs:
                       ac = ac[:i1] + new_nick_go + ac[i2:]
                       with open(appcore_path, "w", encoding="utf-8") as f:
                           f.write(ac)
-                      print("[OK] appcore.go: подключён Router для переписки 2 пользователей и детальный ответ проверки @ника")
+                      print("[OK] appcore.go обновлён")
 
-          # 4. Sidebar.svelte: ЧИНИМ прикрепление фото в Сторис 24ч!
-          #    Вместо <input type="file"> (который игнорируется Android WebView) вызываем нативный Go-диалог SelectImage() + GetFileBase64()!
+          # 4. Sidebar.svelte: нативный выбор фото в Сторис через SelectImage() + GetFileBase64()
           sidebar_path = "frontend/src/components/Sidebar.svelte"
           if os.path.exists(sidebar_path):
               with open(sidebar_path, "r", encoding="utf-8") as f:
@@ -335,7 +335,6 @@ jobs:
               if "import * as AppActions" not in sb:
                   sb = sb.replace("import { Icons }", "import * as AppActions from '../../wailsjs/go/main/App.js';\n    import { Icons }", 1)
 
-              # Заменяем функцию handleStoryFile на вызов нативного пикера Android через AppActions.SelectImage()
               old_story_fn = """    function handleStoryFile(e) {
                   const file = e.target.files?.[0];
                   if (!file) return;
@@ -367,7 +366,6 @@ jobs:
               }"""
               sb = sb.replace(old_story_fn, new_story_fn)
 
-              # Заменяем <label> с неработающим <input type="file"> в модалке Сторис на кнопку вызова pickNativeStoryImage()
               old_story_label = """                      <label style="display: block; text-align: center; padding: 12px; border-radius: 100px; background: #28292D; color: #8AB4F8; font-weight: 700; cursor: pointer; margin-bottom: 10px;">
                           📷 Выбрать фото / Снять с камеры
                           <input type="file" accept="image/*" style="display: none;" on:change={handleStoryFile} />
@@ -380,11 +378,9 @@ jobs:
 
               with open(sidebar_path, "w", encoding="utf-8") as f:
                   f.write(sb)
-              print("[OK] Sidebar.svelte: прикрепление фото в Сторис переведено на нативный пикер SelectImage()!")
+              print("[OK] Sidebar.svelte обновлён")
 
-          # 5. Settings.svelte:
-          #    - ЧИНИМ настройку отпечатка пальца! Убираем заблокированный в WebView prompt() и делаем прямое поле ввода ПИН-кода для привязки биометрии!
-          #    - Улучшаем проверку @ника (показываем точный ответ сервера и пишем в 🐞 Логи)
+          # 5. Settings.svelte: прямое поле привязки ПИН-кода для отпечатка пальца (без заблокированного prompt)
           settings_path = "frontend/src/components/Settings.svelte"
           if os.path.exists(settings_path):
               with open(settings_path, "r", encoding="utf-8") as f:
@@ -392,7 +388,6 @@ jobs:
 
               st = st.replace("height: 100dvh;", "height: 100%;")
 
-              # Заменяем функцию setupAndTestBiometric (убираем prompt, который не работает в Android WebView!)
               old_bio_fn = """    async function setupAndTestBiometric() {
                   biometricEnabled = true;
                   localStorage.setItem('hydra_biometric', '1');
@@ -422,7 +417,6 @@ jobs:
               }"""
               st = st.replace(old_bio_fn, new_bio_fn)
 
-              # Обновляем карточку биометрии в шаблоне Settings.svelte, добавляя туда прямое поле ввода ПИН-кода вместо сломанного prompt()
               old_bio_card = """            <button type="button" on:click={setupAndTestBiometric} style="margin-top: 10px; background: #28292D; color: #8AB4F8; border: 1px solid rgba(138,180,248,0.35); border-radius: 100px; padding: 8px 16px; font-size: 12px; font-weight: 700; cursor: pointer;">
                           ⚙️ Привязать отпечаток пальца
                       </button>"""
@@ -439,7 +433,7 @@ jobs:
 
               with open(settings_path, "w", encoding="utf-8") as f:
                   f.write(st)
-              print("[OK] Settings.svelte: привязка отпечатка пальца работает через прямое поле без prompt()")
+              print("[OK] Settings.svelte обновлён")
           PYEOF
           python3 apply_guaranteed_fixes.py
           rm -f apply_guaranteed_fixes.py
