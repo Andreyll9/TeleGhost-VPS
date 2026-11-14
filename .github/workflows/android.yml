@@ -38,356 +38,11 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Fix Messaging Router, Nick Resolver, Audio/Video Base64, QR Scanner, Viewport & Deep Logger
+      - name: Cleanly Replace toggleVoiceOrCircle in Chat.svelte Without Regex
         run: |
-          cat << 'PYEOF' > fix_everything.py
-          import os, re
+          cat << 'PYEOF' > fix_chat_exact.py
+          import os
 
-          # 1. MainActivity.kt: убираем конфликт LAYOUT_FULLSCREEN и useWideViewPort (чинит пол-экрана на Mi A1 и прыжки интерфейса!)
-          kt_path = "android/app/src/main/java/com/teleghost/app/MainActivity.kt"
-          if os.path.exists(kt_path):
-              with open(kt_path, "r", encoding="utf-8") as f:
-                  kt = f.read()
-              kt = kt.replace(
-                  "View.SYSTEM_UI_FLAG_LAYOUT_STABLE\n            or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN",
-                  "View.SYSTEM_UI_FLAG_LAYOUT_STABLE"
-              )
-              kt = kt.replace("useWideViewPort = true", "useWideViewPort = false")
-              kt = kt.replace("loadWithOverviewMode = true", "loadWithOverviewMode = false")
-              with open(kt_path, "w", encoding="utf-8") as f:
-                  f.write(kt)
-              print("[OK] MainActivity.kt: исправлен масштаб экрана для Mi A1 и убраны прыжки при клавиатуре")
-
-          # 2. internal/appcore/appcore.go:
-          #    - Инициализируем a.Router в ConnectToI2P и передаём его в messenger.NewService(a.Router, ...) (чинит отправку сообщений!)
-          #    - В UpdateMyProfile делаем точную диагностику @ника (свободен / уже ваш / занят другим)
-          #    - Добавляем метод LogUIFromFrontend(entry string) для записи каждого клика и команды в hydra_network.log
-          appcore_path = "internal/appcore/appcore.go"
-          if os.path.exists(appcore_path):
-              with open(appcore_path, "r", encoding="utf-8") as f:
-                  ac = f.read()
-
-              # Чиним инициализацию роутера в ConnectToI2P, если там стоял nil
-              ac = ac.replace(
-                  "a.Messenger = messenger.NewService(nil, a.Identity.Keys, a.OnMessageReceived)",
-                  """if a.Router == nil {
-          		a.Router = router.NewSAMRouter("191.223.137.164:8085")
-          	}
-          	if a.Identity != nil && a.Identity.Keys != nil {
-          		a.Router.SetDestination(a.Identity.Keys.PublicKeyBase64)
-          		router.SetGlobalPrivateKey(a.Identity.Keys.SigningPrivateKey)
-          	}
-          	a.Messenger = messenger.NewService(a.Router, a.Identity.Keys, a.OnMessageReceived)"""
-              )
-
-              # Улучшаем проверку и регистрацию @ника в UpdateMyProfile, чтобы на Realme 9 Pro и Mi A1 выводилась точная причина
-              old_nick_block = r'if strings\.TrimSpace\(nickname\) != "" && a\.Identity != nil \{[\s\S]*?\}\n\t\}'
-              new_nick_block = """if strings.TrimSpace(nickname) != "" && a.Identity != nil && a.Identity.Keys != nil {
-          		cleanNick := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(nickname), "@"))
-          		pub := a.Identity.Keys.PublicKeyBase64
-          		router.SetGlobalPrivateKey(a.Identity.Keys.SigningPrivateKey)
-          		sig := ed25519.Sign(a.Identity.Keys.SigningPrivateKey, []byte("HYDRA-NICK:"+cleanNick+":"+pub))
-          		reqBody, _ := json.Marshal(map[string]string{
-          			"nickname":  cleanNick,
-          			"pub_key":   pub,
-          			"signature": base64.StdEncoding.EncodeToString(sig),
-          		})
-          		client := &http.Client{Timeout: 6 * time.Second}
-          		resp, err := client.Post("http://191.223.137.164:8085/nick/register", "application/json", bytes.NewReader(reqBody))
-          		if err != nil {
-          			log.Printf("[NickRegister] Ошибка связи с VPS: %v", err)
-          			return fmt.Errorf("нет связи с сервером никнеймов: %v", err)
-          		}
-          		defer resp.Body.Close()
-          		if resp.StatusCode == http.StatusConflict {
-          			return fmt.Errorf("никнейм @%s уже закреплён за другим аккаунтом (например, на вашем втором устройстве)", cleanNick)
-          		}
-          		log.Printf("[NickRegister] Никнейм @%s успешно закреплён за ключом %s", cleanNick, pub[:10])
-          	}"""
-              ac = re.sub(old_nick_block, lambda _: new_nick_block, ac, count=1)
-
-              if "func (a *AppCore) AppendDebugLog(" not in ac:
-                  ac += """
-          // AppendDebugLog записывает подробное событие интерфейса или команды в лог.
-          func (a *AppCore) AppendDebugLog(entry string) string {
-          	log.Printf("[UI-TRACE] %s", entry)
-          	return "ok"
-          }
-          """
-              with open(appcore_path, "w", encoding="utf-8") as f:
-                  f.write(ac)
-              print("[OK] appcore.go: подключён Router к Messenger, исправлена регистрация @ника и добавлен AppendDebugLog")
-
-          # 3. Резолв @никнейма и заполнение PublicKey при добавлении контакта + подробное логирование отправки сообщений
-          appcore_dir = "internal/appcore"
-          if os.path.exists(appcore_dir):
-              for fn in os.listdir(appcore_dir):
-                  if not fn.endswith(".go"):
-                      continue
-                  fp = os.path.join(appcore_dir, fn)
-                  with open(fp, "r", encoding="utf-8") as f:
-                      code = f.read()
-                  # В файле, где есть SendText, добавляем авто-копирование I2PAddress -> PublicKey, если PublicKey пуст, и подробный лог
-                  if "func (a *AppCore) SendText(" in code and "[SendText-Debug]" not in code:
-                      code = code.replace(
-                          "func (a *AppCore) SendText(contactID, text, replyToID string) error {",
-                          """func (a *AppCore) SendText(contactID, text, replyToID string) error {
-          	log.Printf("[SendText-Debug] Начало отправки: contactID=%s, len(text)=%d, replyTo=%s", contactID, len(text), replyToID)
-          	if a.Messenger == nil && a.Identity != nil {
-          		log.Println("[SendText-Debug] Messenger был nil, запускаем ConnectToI2P()...")
-          		a.ConnectToI2P()
-          	}"""
-                      )
-                      with open(fp, "w", encoding="utf-8") as f:
-                          f.write(code)
-                      print("[OK] Добавлена трассировка и авто-поднятие роутера в SendText:", fp)
-
-                  # В AddContact гарантируем, что если введён @никнейм или ключ, он резолвится и записывается и в I2PAddress, и в PublicKey
-                  if "func (a *AppCore) AddContact(" in code:
-                      code = code.replace(
-                          'PublicKey:  "",',
-                          'PublicKey:  cleanDest,'
-                      )
-                      with open(fp, "w", encoding="utf-8") as f:
-                          f.write(code)
-
-          # 4. В mobile/mobile.go добавляем метод AppendDebugLog
-          mobile_go_path = "mobile/mobile.go"
-          if os.path.exists(mobile_go_path):
-              with open(mobile_go_path, "r", encoding="utf-8") as f:
-                  mg = f.read()
-              if 'case "AppendDebugLog":' not in mg:
-                  mg = mg.replace(
-                      'case "GetNetworkStatus":',
-                      'case "AppendDebugLog":\n\t\tvar entry string\n\t\tparseArgs(args, &entry)\n\t\treturn app.AppendDebugLog(entry), nil\n\n\tcase "GetNetworkStatus":',
-                      1
-                  )
-                  with open(mobile_go_path, "w", encoding="utf-8") as f:
-                      f.write(mg)
-                  print("[OK] mobile/mobile.go: добавлен RPC-метод AppendDebugLog")
-
-          # 5. В frontend/src/lib/api_bridge.js (и wailsjs) делаем проброс РЕАЛЬНОГО текста ошибки из JSON-ответа Go (вместо "RPC Error: Internal Server Error") и логируем каждую команду!
-          for root, _, files in os.walk("frontend/src"):
-              for fn in files:
-                  if fn in ("api_bridge.js", "App.js"):
-                      bp = os.path.join(root, fn)
-                      with open(bp, "r", encoding="utf-8") as f:
-                          bcode = f.read()
-                      orig_b = bcode
-                      # Заменяем обезличенный Internal Server Error на чтение поля data.error из ответа сервера
-                      bcode = re.sub(
-                          r"throw new Error\(`RPC Error: \$\{res\.statusText\}`\);",
-                          "const errJson = await res.json().catch(() => ({})); throw new Error(errJson.error || `RPC Error: ${res.statusText}`);",
-                          bcode
-                      )
-                      bcode = re.sub(
-                          r"throw new Error\('RPC Error: '\s*\+\s*res\.statusText\);",
-                          "const errJson = await res.json().catch(() => ({})); throw new Error(errJson.error || ('RPC Error: ' + res.statusText));",
-                          bcode
-                      )
-                      if bcode != orig_b:
-                          with open(bp, "w", encoding="utf-8") as f:
-                              f.write(bcode)
-                          print("[OK] Исправлен проброс точного текста ошибок в:", bp)
-
-          # 6. App.svelte:
-          #    - Встраиваем Глобальный Логгер всех кликов, ввода, ошибок и RPC-запросов + плавающую кнопку "🐞 Логи" с консолью на экране
-          #    - Фиксируем CSS вёрстку (100% height, position: fixed, запрет прыжков экрана на Mi A1 и Realme 9 Pro)
-          app_svelte = "frontend/src/App.svelte"
-          if os.path.exists(app_svelte):
-              with open(app_svelte, "r", encoding="utf-8") as f:
-                  ap = f.read()
-
-              logger_js = """
-              // === ГЛОБАЛЬНАЯ СИСТЕМА ПОДРОБНОГО ЛОГИРОВАНИЯ HYDRA ===
-              let hydraLogs = [];
-              let showHydraLogModal = false;
-
-              function addHydraLog(category, message) {
-                  const now = new Date();
-                  const timeStr = now.toTimeString().split(' ')[0] + '.' + String(now.getMilliseconds()).padStart(3, '0');
-                  const line = `[${timeStr}] [${category}] ${message}`;
-                  hydraLogs = [line, ...hydraLogs.slice(0, 299)];
-                  console.log(line);
-                  try {
-                      if (AppActions && typeof AppActions.AppendDebugLog === 'function') {
-                          AppActions.AppendDebugLog(line);
-                      } else {
-                          fetch('/api/AppendDebugLog', {
-                              method: 'POST',
-                              headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({ args: [line] })
-                          }).catch(() => {});
-                      }
-                  } catch (e) {}
-              }
-
-              if (typeof window !== 'undefined' && !window.__hydraDeepLoggerInstalled) {
-                  window.__hydraDeepLoggerInstalled = true;
-                  window.__addHydraLog = addHydraLog;
-
-                  // 1. Логируем каждое нажатие на экран / кнопки / элементы интерфейса
-                  document.addEventListener('click', (e) => {
-                      const el = e.target?.closest('button, a, input, label, select, [role="button"]') || e.target;
-                      const tag = el?.tagName || 'EL';
-                      const txt = (el?.innerText || el?.placeholder || el?.title || el?.className || '').toString().replace(/\\s+/g, ' ').trim().slice(0, 50);
-                      addHydraLog('UI-CLICK', `<${tag}> "${txt}"`);
-                  }, true);
-
-                  // 2. Перехватываем все fetch-запросы к /api/ для логирования команд, аргументов и ответов
-                  const origFetch = window.fetch.bind(window);
-                  window.fetch = async (url, opts) => {
-                      const urlStr = String(url);
-                      if (urlStr.includes('/api/') && !urlStr.includes('AppendDebugLog') && !urlStr.includes('/api/events')) {
-                          const method = urlStr.split('/api/')[1];
-                          let argsPreview = '';
-                          try {
-                              argsPreview = (opts?.body || '').slice(0, 120);
-                          } catch (e) {}
-                          const t0 = Date.now();
-                          addHydraLog('RPC-REQ', `${method} args=${argsPreview}`);
-                          try {
-                              const resp = await origFetch(url, opts);
-                              const clone = resp.clone();
-                              const data = await clone.json().catch(() => ({}));
-                              const dt = Date.now() - t0;
-                              if (!resp.ok || data.error) {
-                                  addHydraLog('RPC-ERR', `${method} (${dt}ms) -> ОШИБКА: ${data.error || resp.statusText}`);
-                                  // Возвращаем модифицированный Response, чтобы клиент увидел точный текст ошибки!
-                                  if (data.error) {
-                                      return new Response(JSON.stringify(data), { status: 500, statusText: data.error, headers: resp.headers });
-                                  }
-                              } else {
-                                  const resPreview = JSON.stringify(data.result ?? 'OK').slice(0, 100);
-                                  addHydraLog('RPC-OK', `${method} (${dt}ms) -> ${resPreview}`);
-                              }
-                              return resp;
-                          } catch (netErr) {
-                              addHydraLog('RPC-FAIL', `${method} -> Сбой сети: ${netErr}`);
-                              throw netErr;
-                          }
-                      }
-                      return origFetch(url, opts);
-                  };
-
-                  window.addEventListener('error', (ev) => {
-                      addHydraLog('JS-ERROR', `${ev.message} (${ev.filename}:${ev.lineno})`);
-                  });
-                  window.addEventListener('unhandledrejection', (ev) => {
-                      addHydraLog('PROMISE-ERR', String(ev.reason));
-                  });
-              }
-              """
-
-              logger_ui_html = """
-              <!-- Плавающая кнопка открытия подробных логов -->
-              <button
-                  type="button"
-                  on:click={() => showHydraLogModal = !showHydraLogModal}
-                  style="position: fixed; bottom: 78px; left: 12px; z-index: 99998; background: rgba(24,25,28,0.92); color: #8AB4F8; border: 1.5px solid #8AB4F8; border-radius: 100px; padding: 6px 12px; font-size: 11px; font-weight: 700; box-shadow: 0 4px 12px rgba(0,0,0,0.5); cursor: pointer;"
-              >
-                  🐞 Логи ({hydraLogs.length})
-              </button>
-
-              {#if showHydraLogModal}
-                  <div style="position: fixed; inset: 0; background: rgba(0,0,0,0.88); z-index: 99999; display: flex; flex-direction: column; padding: 16px; padding-top: calc(16px + env(safe-area-inset-top, 10px));">
-                      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                          <div style="font-weight: 800; color: #8AB4F8; font-size: 16px;">🐞 Журнал событий и команд Hydra</div>
-                          <div style="display: flex; gap: 8px;">
-                              <button type="button" on:click={() => { AppActions.ClipboardSet(hydraLogs.join('\\n')); showToast('Все логи скопированы!', 'success'); }} style="background: #8AB4F8; color: #062E6F; border: none; border-radius: 100px; padding: 6px 14px; font-size: 12px; font-weight: 700;">📋 Копировать</button>
-                              <button type="button" on:click={() => hydraLogs = []} style="background: #28292D; color: #E3E3E3; border: none; border-radius: 100px; padding: 6px 12px; font-size: 12px;">Очистить</button>
-                              <button type="button" on:click={() => showHydraLogModal = false} style="background: #ff4757; color: #fff; border: none; border-radius: 50%; width: 32px; height: 32px; font-weight: 700;">✕</button>
-                          </div>
-                      </div>
-                      <div style="flex: 1; background: #0c0c10; border: 1px solid rgba(138,180,248,0.25); border-radius: 16px; padding: 12px; overflow-y: auto; font-family: monospace; font-size: 11px; line-height: 1.45; color: #E3E3E3;">
-                          {#if hydraLogs.length === 0}
-                              <div style="color: #9AA0A6;">Нажмите на любую кнопку, чтобы увидеть подробную трассировку...</div>
-                          {/if}
-                          {#each hydraLogs as logLine}
-                              <div style="margin-bottom: 4px; border-bottom: 1px solid rgba(255,255,255,0.04); padding-bottom: 3px; word-break: break-all; color: {logLine.includes('ERR') || logLine.includes('FAIL') ? '#ff6b6b' : (logLine.includes('RPC-OK') ? '#69db7c' : (logLine.includes('UI-CLICK') ? '#ffd43b' : '#E3E3E3'))};">
-                                  {logLine}
-                              </div>
-                          {/each}
-                      </div>
-                  </div>
-              {/if}
-              """
-
-              if "__hydraDeepLoggerInstalled" not in ap:
-                  ap = ap.replace("onMount(", logger_js + "\n    onMount(", 1)
-                  ap = ap.replace("<style>", logger_ui_html + "\n<style>", 1)
-
-              # Добавляем глобальный CSS-фикс от пол-экрана на Mi A1 и от прыжков интерфейса
-              viewport_fix_css = """
-              :global(html, body, #app) {
-                  position: fixed !important;
-                  inset: 0 !important;
-                  width: 100% !important;
-                  height: 100% !important;
-                  max-height: 100% !important;
-                  margin: 0 !important;
-                  padding: 0 !important;
-                  overflow: hidden !important;
-                  overscroll-behavior: none !important;
-                  -webkit-text-size-adjust: 100% !important;
-              }
-              :global(.app-container, .mobile-sidebar, .settings-panel, .chat-area, .login-screen) {
-                  width: 100% !important;
-                  height: 100% !important;
-                  max-height: 100% !important;
-                  overflow: hidden !important;
-              }
-              """
-              if "overscroll-behavior: none !important;" not in ap:
-                  ap = ap.replace("</style>", viewport_fix_css + "\n</style>", 1)
-
-              with open(app_svelte, "w", encoding="utf-8") as f:
-                  f.write(ap)
-              print("[OK] App.svelte: встроена консоль подробных логов (🐞 Логи) и зафиксирован экран для Mi A1 / Realme")
-
-          # 7. Sidebar.svelte и Settings.svelte: заменяем 100dvh на 100% для полной совместимости с WebView на Mi A1
-          for sp in ("frontend/src/components/Sidebar.svelte", "frontend/src/components/Settings.svelte"):
-              if os.path.exists(sp):
-                  with open(sp, "r", encoding="utf-8") as f:
-                      sc = f.read()
-                  sc = sc.replace("height: 100dvh;", "height: 100%;")
-                  with open(sp, "w", encoding="utf-8") as f:
-                      f.write(sc)
-
-          # 8. Settings.svelte: делаем проверку @ника через прямой запрос к /nick/resolve + UpdateMyProfile с выводом точной причины
-          settings_path = "frontend/src/components/Settings.svelte"
-          if os.path.exists(settings_path):
-              with open(settings_path, "r", encoding="utf-8") as f:
-                  st = f.read()
-
-              old_check_nick = r"async function checkNicknameAvailability\(\)\s*\{[\s\S]*?\n\s*\}"
-              new_check_nick = """async function checkNicknameAvailability() {
-                  const clean = (profileNickname || '').trim().replace(/^@/, '').toLowerCase();
-                  if (clean.length < 3) {
-                      nickCheckStatus = '⚠️ Минимум 3 символа для @ника';
-                      return;
-                  }
-                  nickCheckStatus = '⏳ Проверка и регистрация @' + clean + ' на VPS...';
-                  if (window.__addHydraLog) window.__addHydraLog('NICK-CHECK', 'Проверка ника @' + clean);
-                  try {
-                      await AppActions.UpdateMyProfile(clean, profileBio || '', profileAvatar || '');
-                      nickCheckStatus = '✅ Никнейм @' + clean + ' свободен и закреплён за этим устройством!';
-                      if (window.__addHydraLog) window.__addHydraLog('NICK-OK', 'Закреплён @' + clean);
-                  } catch (e) {
-                      const msg = typeof e === 'string' ? e : (e?.message || String(e));
-                      nickCheckStatus = '❌ ' + msg;
-                      if (window.__addHydraLog) window.__addHydraLog('NICK-ERR', msg);
-                  }
-              }"""
-              st = re.sub(old_check_nick, lambda _: new_check_nick, st, count=1)
-              with open(settings_path, "w", encoding="utf-8") as f:
-                  f.write(st)
-              print("[OK] Settings.svelte: точная диагностика @ника на разных устройствах")
-
-          # 9. Chat.svelte:
-          #    - ИСПРАВЛЯЕМ вставку огромного Base64-текста в поле ввода при записи аудио/видео!
-          #      Отправляем аудио и видео-кружок напрямую через SendText(selectedContact.ID, payload, ""), НЕ трогая newMessage!
-          #    - Сжимаем аудио (16kbps) и видео-кружок (96kbps, до 15 сек), чтобы сообщение улетало мгновенно.
           chat_path = "frontend/src/components/Chat.svelte"
           if os.path.exists(chat_path):
               with open(chat_path, "r", encoding="utf-8") as f:
@@ -396,8 +51,14 @@ jobs:
               if "import * as AppActions" not in ch:
                   ch = ch.replace("import { Icons }", "import * as AppActions from '../../wailsjs/go/main/App.js';\n    import { Icons }", 1)
 
-              old_voice_fn = r"async function toggleVoiceOrCircle\(mode\)\s*\{[\s\S]*?\n\s*\}"
-              new_voice_fn = """async function toggleVoiceOrCircle(mode) {
+              fn_marker = "async function toggleVoiceOrCircle(mode)"
+              script_end = "</script>"
+
+              idx1 = ch.find(fn_marker)
+              idx2 = ch.find(script_end, idx1)
+
+              if idx1 != -1 and idx2 != -1:
+                  clean_fn = """async function toggleVoiceOrCircle(mode) {
                   if (isRecordingMedia && mediaRecorderInstance) {
                       clearInterval(recordingInterval);
                       if (window.__addHydraLog) window.__addHydraLog('MEDIA-REC', 'Остановка записи ' + recordMode + ' (' + recordingSeconds + ' сек)');
@@ -435,7 +96,6 @@ jobs:
                               const payload = recordMode === 'video'
                                   ? `[HYDRA_CIRCLE]:${base64Url}`
                                   : `[HYDRA_VOICE]:${base64Url}`;
-                              // Отправляем напрямую в чат, НЕ вставляя огромную строку в поле ввода newMessage!
                               try {
                                   const targetId = selectedContact?.ID || selectedContact?.ChatID;
                                   if (window.__addHydraLog) window.__addHydraLog('MEDIA-SEND', `Отправка медиа в чат ${targetId} (${payload.length} симв.)`);
@@ -464,84 +124,13 @@ jobs:
                       alert('Разрешите доступ к микрофону и камере: ' + err);
                   }
               }"""
-
-              ch = re.sub(old_voice_fn, lambda _: new_voice_fn, ch, count=1)
-              with open(chat_path, "w", encoding="utf-8") as f:
-                  f.write(ch)
-              print("[OK] Chat.svelte: аудио и кружки больше не вставляют Base64 в текстовое поле и сжимаются перед отправкой")
-
-          # 10. Modals.svelte: подключаем универсальный сканер QR-кодов jsQR (работает на ВСЕХ Android WebView без Google Services!)
-          modals_path = "frontend/src/components/Modals.svelte"
-          if os.path.exists(modals_path):
-              with open(modals_path, "r", encoding="utf-8") as f:
-                  md = f.read()
-
-              if "import jsQR" not in md:
-                  md = md.replace("import { Icons }", "import jsQR from 'jsqr';\n    import { Icons }", 1)
-
-              old_qr_fn = r"async function handleScanQRFile\(e\)\s*\{[\s\S]*?\n\s*\}"
-              new_qr_fn = """async function handleScanQRFile(e) {
-                  const file = e.target.files?.[0];
-                  if (!file) return;
-                  if (window.__addHydraLog) window.__addHydraLog('QR-SCAN', 'Выбран файл QR: ' + file.name + ' (' + file.size + ' байт)');
-                  try {
-                      // Способ 1: через универсальную библиотеку jsQR + Canvas (работает на 100% телефонов)
-                      const img = new Image();
-                      const url = URL.createObjectURL(file);
-                      await new Promise((resolve, reject) => {
-                          img.onload = resolve;
-                          img.onerror = reject;
-                          img.src = url;
-                      });
-                      const canvas = document.createElement('canvas');
-                      const maxDim = 1024;
-                      let w = img.width;
-                      let h = img.height;
-                      if (w > maxDim || h > maxDim) {
-                          if (w > h) { h = Math.round((h * maxDim) / w); w = maxDim; }
-                          else { w = Math.round((w * maxDim) / h); h = maxDim; }
-                      }
-                      canvas.width = w;
-                      canvas.height = h;
-                      const ctx = canvas.getContext('2d');
-                      ctx.drawImage(img, 0, 0, w, h);
-                      const imageData = ctx.getImageData(0, 0, w, h);
-                      URL.revokeObjectURL(url);
-
-                      const code = jsQR(imageData.data, imageData.width, imageData.height);
-                      if (code && code.data) {
-                          addContactAddress = code.data.trim();
-                          if (!addContactName.trim()) addContactName = 'Контакт ' + addContactAddress.slice(0, 6);
-                          if (window.__addHydraLog) window.__addHydraLog('QR-OK', 'Распознан адрес: ' + addContactAddress);
-                          return;
-                      }
-
-                      // Способ 2: резервный BarcodeDetector
-                      if ('BarcodeDetector' in window) {
-                          const bitmap = await createImageBitmap(file);
-                          const detector = new BarcodeDetector({ formats: ['qr_code'] });
-                          const codes = await detector.detect(bitmap);
-                          if (codes.length > 0 && codes[0].rawValue) {
-                              addContactAddress = codes[0].rawValue.trim();
-                              if (!addContactName.trim()) addContactName = 'Контакт ' + addContactAddress.slice(0, 6);
-                              if (window.__addHydraLog) window.__addHydraLog('QR-OK', 'Распознан через BarcodeDetector: ' + addContactAddress);
-                              return;
-                          }
-                      }
-                      if (window.__addHydraLog) window.__addHydraLog('QR-FAIL', 'QR-код не найден на изображении');
-                      alert('QR-код не распознан. Сделайте более чёткий снимок или обрежьте края.');
-                  } catch (err) {
-                      if (window.__addHydraLog) window.__addHydraLog('QR-ERR', String(err));
-                      alert('Ошибка чтения QR: ' + err);
-                  }
-              }"""
-              md = re.sub(old_qr_fn, lambda _: new_qr_fn, md, count=1)
-              with open(modals_path, "w", encoding="utf-8") as f:
-                  f.write(md)
-              print("[OK] Modals.svelte: подключён универсальный декодер jsQR для любых телефонов")
+                  ch = ch[:idx1] + clean_fn + "\n</script>" + ch[idx2 + len(script_end):]
+                  with open(chat_path, "w", encoding="utf-8") as f:
+                      f.write(ch)
+                  print("[OK] Chat.svelte: функция toggleVoiceOrCircle чисто перезаписана до самого </script>!")
           PYEOF
-          python3 fix_everything.py
-          rm -f fix_everything.py
+          python3 fix_chat_exact.py
+          rm -f fix_chat_exact.py
           gofmt -w internal/ mobile/
 
       - name: Install jsQR & Build Frontend (Svelte)
@@ -551,13 +140,13 @@ jobs:
           npm install jsqr --save
           npm run build
 
-      - name: Commit All Fixes to Repository
+      - name: Commit Clean Chat.svelte to Repository
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           if [ -n "$(git status --porcelain)" ]; then
             git add .
-            git commit -m "Fix messaging router, nick conflict message, Base64 audio/video send, jsQR scanner, Mi A1 viewport & add UI Debug Logger [skip ci]"
+            git commit -m "Cleanly replace toggleVoiceOrCircle up to </script> in Chat.svelte [skip ci]"
             git pull --rebase origin main || true
             git push || true
           fi
