@@ -274,22 +274,28 @@ func (a *AppCore) Shutdown() {
 
 // UpdateMyProfile обновляет профиль пользователя в БД и в менеджере профилей.
 func (a *AppCore) UpdateMyProfile(nickname, bio, avatar string) error {
-	if strings.TrimSpace(nickname) != "" && a.Identity != nil {
+	if strings.TrimSpace(nickname) != "" && a.Identity != nil && a.Identity.Keys != nil {
 		cleanNick := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(nickname), "@"))
 		pub := a.Identity.Keys.PublicKeyBase64
+		router.SetGlobalPrivateKey(a.Identity.Keys.SigningPrivateKey)
 		sig := ed25519.Sign(a.Identity.Keys.SigningPrivateKey, []byte("HYDRA-NICK:"+cleanNick+":"+pub))
 		reqBody, _ := json.Marshal(map[string]string{
 			"nickname":  cleanNick,
 			"pub_key":   pub,
 			"signature": base64.StdEncoding.EncodeToString(sig),
 		})
-		client := &http.Client{Timeout: 5 * time.Second}
+		client := &http.Client{Timeout: 6 * time.Second}
 		resp, err := client.Post("http://191.223.137.164:8085/nick/register", "application/json", bytes.NewReader(reqBody))
-		if err == nil {
-			defer resp.Body.Close()
-			if resp.StatusCode == http.StatusConflict {
-				return fmt.Errorf("этот никнейм уже занят другим пользователем")
-			}
+		if err != nil {
+			return fmt.Errorf("нет связи с сервером никнеймов (191.223.137.164:8085): %v", err)
+		}
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusConflict {
+			return fmt.Errorf("никнейм @%s уже занят другим аккаунтом (ответ VPS: %s)", cleanNick, strings.TrimSpace(string(bodyBytes)))
+		}
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("сервер отклонил никнейм @%s (код %d: %s)", cleanNick, resp.StatusCode, strings.TrimSpace(string(bodyBytes)))
 		}
 	}
 	log.Printf("[AppCore] Updating profile: nickname=%s, bio=%s, avatarLen=%d", nickname, bio, len(avatar))
@@ -650,7 +656,14 @@ func (a *AppCore) ConnectToI2P() {
 			_ = a.Repo.SaveUser(a.Ctx, user)
 		}
 	}
-	a.Messenger = messenger.NewService(nil, a.Identity.Keys, a.OnMessageReceived)
+	if a.Router == nil {
+		a.Router = router.NewSAMRouter("191.223.137.164:8085")
+	}
+	if a.Identity != nil && a.Identity.Keys != nil {
+		a.Router.SetDestination(a.Identity.Keys.PublicKeyBase64)
+		router.SetGlobalPrivateKey(a.Identity.Keys.SigningPrivateKey)
+	}
+	a.Messenger = messenger.NewService(a.Router, a.Identity.Keys, a.OnMessageReceived)
 	a.Messenger.SetAttachmentSaver(a.SaveAttachment)
 	a.Messenger.SetContactHandler(a.OnContactRequest)
 	a.Messenger.SetFileOfferHandler(a.onFileOffer)

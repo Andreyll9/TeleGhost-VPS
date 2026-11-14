@@ -87,14 +87,23 @@
         }
     }
 
+    let bioPinToBind = localStorage.getItem('hydra_bio_pin_default') || '';
+    let bioBindStatus = localStorage.getItem('hydra_bio_pin_default') ? '✅ Отпечаток привязан и активен' : '';
+
     async function setupAndTestBiometric() {
+        if (!bioPinToBind || bioPinToBind.trim().length < 4) {
+            bioBindStatus = '⚠️ Введите ваш ПИН-код в поле ниже для привязки к биометрии';
+            if (window.__addHydraLog) window.__addHydraLog('BIO-SETUP', 'Пустой ПИН при привязке отпечатка');
+            return;
+        }
         biometricEnabled = true;
         localStorage.setItem('hydra_biometric', '1');
-        const pin = prompt('Введите ваш текущий ПИН-код для привязки к сканеру отпечатка пальца:');
-        if (pin && pin.trim().length > 0) {
-            localStorage.setItem('hydra_bio_pin_default', pin.trim());
-            if (typeof showToast === 'function') showToast('✅ Отпечаток пальца привязан! При следующем входе сработает авто-разблокировка.', 'success');
-            }
+        localStorage.setItem('hydra_bio_pin_default', bioPinToBind.trim());
+        if (selectedProfile && selectedProfile.id) {
+            localStorage.setItem('hydra_bio_pin_' + selectedProfile.id, bioPinToBind.trim());
+        }
+        bioBindStatus = '✅ Отпечаток пальца успешно привязан к профилю!';
+        if (window.__addHydraLog) window.__addHydraLog('BIO-OK', 'Отпечаток привязан к профилю ' + (selectedProfile?.id || 'default'));
     }
     function toHydraMasterKey(rawSeed) {
         if (!rawSeed) return '';
@@ -217,9 +226,15 @@
                 <div>
                     <div style="font-weight: 700; color: #E3E3E3; font-size: 15px;">👆 Разблокировка по отпечатку пальца</div>
                     <div style="font-size: 13px; color: #9AA0A6; margin-top: 4px;">Автоматически запрашивать биометрию при входе</div>
-            <button type="button" on:click={setupAndTestBiometric} style="margin-top: 10px; background: #28292D; color: #8AB4F8; border: 1px solid rgba(138,180,248,0.35); border-radius: 100px; padding: 8px 16px; font-size: 12px; font-weight: 700; cursor: pointer;">
-                ⚙️ Привязать отпечаток пальца
-            </button>
+            <div style="margin-top: 10px; display: flex; gap: 8px; align-items: center;">
+                <input type="password" placeholder="Ваш ПИН для биометрии..." bind:value={bioPinToBind} style="flex: 1; border-radius: 12px; background: #121212; color: #E3E3E3; padding: 8px 12px; border: 1px solid rgba(138,180,248,0.3); font-size: 12px;" />
+                <button type="button" on:click={setupAndTestBiometric} style="background: #8AB4F8; color: #062E6F; border: none; border-radius: 100px; padding: 8px 14px; font-size: 12px; font-weight: 700; cursor: pointer; white-space: nowrap;">
+                    👆 Привязать
+                </button>
+            </div>
+            {#if bioBindStatus}
+                <div style="margin-top: 6px; font-size: 12px; color: #8AB4F8;">{bioBindStatus}</div>
+            {/if}
                 </div>
                 <input type="checkbox" checked={biometricEnabled} on:change={toggleBiometric} style="width: 22px; height: 22px; accent-color: #8AB4F8;" />
             </div>
@@ -377,7 +392,7 @@
 </div>
 
 <style>
-    .settings-panel { flex: 1; display: flex; flex-direction: column; height: 100dvh; background: var(--bg-primary); overflow: hidden; }
+    .settings-panel { flex: 1; display: flex; flex-direction: column; height: 100%; background: var(--bg-primary); overflow: hidden; }
     @media (max-width: 768px) {
         .settings-header { padding: 12px 16px; height: 60px; }
         .settings-header h2 { font-size: 20px; }

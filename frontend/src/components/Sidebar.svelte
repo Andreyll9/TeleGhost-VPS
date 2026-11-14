@@ -1,4 +1,5 @@
 <script>
+    import * as AppActions from '../../wailsjs/go/main/App.js';
     import { Icons } from '../Icons.js';
     import { getInitials, formatTime, getStatusColor, getStatusText, getAvatarGradient } from '../utils.js';
     import { writable } from 'svelte/store';
@@ -117,6 +118,21 @@
     }
     loadHydraStories();
 
+    async function pickNativeStoryImage() {
+        if (window.__addHydraLog) window.__addHydraLog('STORY', 'Открытие галереи для выбора фото в Сторис...');
+        try {
+            const path = await AppActions.SelectImage();
+            if (path) {
+                const b64 = await AppActions.GetFileBase64(path);
+                if (b64) {
+                    newStoryImage = 'data:image/jpeg;base64,' + b64;
+                    if (window.__addHydraLog) window.__addHydraLog('STORY-OK', 'Фото загружено в Сторис (' + b64.length + ' симв.)');
+                }
+            }
+        } catch (err) {
+            if (window.__addHydraLog) window.__addHydraLog('STORY-ERR', 'Ошибка выбора фото: ' + err);
+        }
+    }
     function handleStoryFile(e) {
         const file = e.target.files?.[0];
         if (!file) return;
@@ -687,7 +703,7 @@
     /* === Mobile Styles === */
     .mobile-sidebar {
         width: 100%;
-        height: 100dvh;
+        height: 100%;
         display: flex;
         flex-direction: column;
         background: var(--bg-primary, #0c0c14);
