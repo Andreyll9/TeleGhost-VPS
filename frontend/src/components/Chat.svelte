@@ -1,4 +1,5 @@
 <script>
+    import * as AppActions from '../../wailsjs/go/main/App.js';
     import { Icons } from '../Icons.js';
     import { getInitials, formatTime, parseMarkdown, getAvatarGradient } from '../utils.js';
     import { fade, fly } from 'svelte/transition';
@@ -315,18 +316,27 @@
     async function toggleVoiceOrCircle(mode) {
         if (isRecordingMedia && mediaRecorderInstance) {
             clearInterval(recordingInterval);
+            if (window.__addHydraLog) window.__addHydraLog('MEDIA-REC', 'Остановка записи ' + recordMode + ' (' + recordingSeconds + ' сек)');
             mediaRecorderInstance.stop();
             isRecordingMedia = false;
             return;
         }
         recordMode = mode;
         try {
+            if (window.__addHydraLog) window.__addHydraLog('MEDIA-REC', 'Запрос микрофона/камеры для ' + mode);
             const stream = await navigator.mediaDevices.getUserMedia({
-                audio: true,
-                video: mode === 'video' ? { facingMode: 'user', width: 240, height: 240 } : false
+                audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 16000 },
+                video: mode === 'video' ? { facingMode: 'user', width: { ideal: 180 }, height: { ideal: 180 }, frameRate: { ideal: 15 } } : false
             });
             recordedChunks = [];
-            mediaRecorderInstance = new MediaRecorder(stream);
+            const options = mode === 'video'
+                ? { videoBitsPerSecond: 96000, audioBitsPerSecond: 16000 }
+                : { audioBitsPerSecond: 16000 };
+            try {
+                mediaRecorderInstance = new MediaRecorder(stream, options);
+            } catch (e) {
+                mediaRecorderInstance = new MediaRecorder(stream);
+            }
             mediaRecorderInstance.ondataavailable = (e) => {
                 if (e.data && e.data.size > 0) recordedChunks.push(e.data);
             };
@@ -334,22 +344,39 @@
                 stream.getTracks().forEach(t => t.stop());
                 const mime = recordMode === 'video' ? 'video/webm' : 'audio/webm';
                 const blob = new Blob(recordedChunks, { type: mime });
+                if (window.__addHydraLog) window.__addHydraLog('MEDIA-BLOB', `Готов ${mime}, размер: ${blob.size} байт`);
                 const reader = new FileReader();
-                reader.onloadend = () => {
+                reader.onloadend = async () => {
                     const base64Url = reader.result;
-                    newMessage = recordMode === 'video'
+                    const payload = recordMode === 'video'
                         ? `[HYDRA_CIRCLE]:${base64Url}`
                         : `[HYDRA_VOICE]:${base64Url}`;
-                    onSendMessage();
+                    try {
+                        const targetId = selectedContact?.ID || selectedContact?.ChatID;
+                        if (window.__addHydraLog) window.__addHydraLog('MEDIA-SEND', `Отправка медиа в чат ${targetId} (${payload.length} симв.)`);
+                        await AppActions.SendText(targetId, payload, '');
+                        dispatch('refreshMessages');
+                    } catch (sendErr) {
+                        if (window.__addHydraLog) window.__addHydraLog('MEDIA-ERR', String(sendErr));
+                        alert('Ошибка отправки медиа: ' + sendErr);
+                    }
                 };
                 reader.readAsDataURL(blob);
             };
             recordingSeconds = 0;
-            recordingInterval = setInterval(() => { recordingSeconds++; }, 1000);
-            mediaRecorderInstance.start();
+            recordingInterval = setInterval(() => {
+                recordingSeconds++;
+                if (recordingSeconds >= 30 && isRecordingMedia && mediaRecorderInstance) {
+                    clearInterval(recordingInterval);
+                    mediaRecorderInstance.stop();
+                    isRecordingMedia = false;
+                }
+            }, 1000);
+            mediaRecorderInstance.start(250);
             isRecordingMedia = true;
         } catch (err) {
-            alert('Разрешите доступ к микрофону и камере в настройках Android: ' + err);
+            if (window.__addHydraLog) window.__addHydraLog('MEDIA-PERM-ERR', String(err));
+            alert('Разрешите доступ к микрофону и камере: ' + err);
         }
     }
 </script>
