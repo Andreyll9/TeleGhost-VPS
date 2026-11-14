@@ -38,34 +38,812 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Fix NewSAMRouter Signature in appcore.go
+      - name: Implement Hardware BiometricPrompt, Native FileChooser, QR/Story Fix & Deep System Logger
         run: |
-          cat << 'PYEOF' > fix_router_call.py
-          import os
+          cat << 'PYEOF' > apply_hardware_fixes.py
+          import os, re
 
-          appcore_path = "internal/appcore/appcore.go"
-          if os.path.exists(appcore_path):
-              with open(appcore_path, "r", encoding="utf-8") as f:
-                  ac = f.read()
+          # 1. AndroidManifest.xml: добавляем разрешения USE_BIOMETRIC и USE_FINGERPRINT для аппаратного сканера отпечатка
+          manifest_path = "android/app/src/main/AndroidManifest.xml"
+          if os.path.exists(manifest_path):
+              with open(manifest_path, "r", encoding="utf-8") as f:
+                  mf = f.read()
+              bio_perms = """    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+              <uses-permission android:name="android.permission.USE_FINGERPRINT" />
+          """
+              if "android.permission.USE_BIOMETRIC" not in mf:
+                  mf = mf.replace('<uses-permission android:name="android.permission.INTERNET" />', bio_perms + '    <uses-permission android:name="android.permission.INTERNET" />', 1)
+                  with open(manifest_path, "w", encoding="utf-8") as f:
+                      f.write(mf)
+                  print("[OK] AndroidManifest.xml: добавлены USE_BIOMETRIC и USE_FINGERPRINT")
 
-              ac = ac.replace('router.NewSAMRouter("191.223.137.164:8085")', 'router.NewSAMRouter(nil)')
-              ac = ac.replace('a.Router.SetDestination(a.Identity.Keys.PublicKeyBase64)', '')
+          # 2. MainActivity.kt:
+          #    - Настоящий аппаратный сканер отпечатка пальца (android.hardware.biometrics.BiometricPrompt) через @JavascriptInterface HydraNative
+          #    - Настоящая поддержка <input type="file"> в WebView через onShowFileChooser (чинит фото в Сторис и сканер QR!)
+          #    - Прямая трансляция всех нативных событий Android (разрешения, файлы, биометрия) в окно "🐞 Логи"
+          kt_path = "android/app/src/main/java/com/teleghost/app/MainActivity.kt"
+          clean_kt = '''package com.teleghost.app
 
-              with open(appcore_path, "w", encoding="utf-8") as f:
-                  f.write(ac)
-              print("[OK] appcore.go: исправлен вызов router.NewSAMRouter(nil)")
+          import android.annotation.SuppressLint
+          import android.app.Activity
+          import android.content.Context
+          import android.content.Intent
+          import android.content.pm.PackageManager
+          import android.hardware.biometrics.BiometricPrompt
+          import android.net.Uri
+          import android.os.Build
+          import android.os.Bundle
+          import android.os.CancellationSignal
+          import android.view.View
+          import android.view.WindowManager
+          import android.webkit.*
+          import androidx.activity.result.contract.ActivityResultContracts
+          import androidx.appcompat.app.AppCompatActivity
+          import java.io.File
+          import java.io.FileOutputStream
+          import java.util.UUID
+          import org.json.JSONObject
+
+          class MainActivity : AppCompatActivity(), mobile.PlatformBridge {
+
+              private lateinit var webView: WebView
+              private var webViewFileCallback: ValueCallback<Array<Uri>>? = null
+
+              companion object {
+                  private const val TAG = "Hydra"
+                  private const val SERVER_URL = "http://127.0.0.1:8080"
+                  private const val HEALTH_URL = "$SERVER_URL/health"
+                  private const val MAX_RETRIES = 30
+                  private const val RETRY_DELAY_MS = 1000L
+                  private const val NOTIFICATION_CHANNEL_ID = "teleghost_messages"
+                  private const val PREFS_NAME = "hydra_biometric_prefs"
+              }
+
+              fun pushNativeLog(tag: String, msg: String) {
+                  android.util.Log.i(TAG, "[$tag] $msg")
+                  runOnUiThread {
+                      if (::webView.isInitialized) {
+                          val safeTag = JSONObject.quote(tag)
+                          val safeMsg = JSONObject.quote(msg)
+                          webView.evaluateJavascript("if(window.__addHydraLog) window.__addHydraLog($safeTag, $safeMsg);", null)
+                      }
+                  }
+              }
+
+              // Нативный мост для прямого вызова из Svelte (window.HydraNative)
+              inner class HydraNativeBridge {
+
+                  @JavascriptInterface
+                  fun checkSystemStatus(profileId: String): String {
+                      val cam = if (Build.VERSION.SDK_INT >= 23) checkSelfPermission(android.Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED else true
+                      val mic = if (Build.VERSION.SDK_INT >= 23) checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED else true
+                      val notif = if (Build.VERSION.SDK_INT >= 33) checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED else true
+                      val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                      val hasBioBound = prefs.contains("bio_pin_$profileId") || prefs.contains("bio_pin_default")
+                      val obj = JSONObject()
+                      obj.put("camera", cam)
+                      obj.put("microphone", mic)
+                      obj.put("notifications", notif)
+                      obj.put("biometricBound", hasBioBound)
+                      obj.put("sdkInt", Build.VERSION.SDK_INT)
+                      obj.put("device", "${Build.MANUFACTURER} ${Build.MODEL}")
+                      pushNativeLog("SYS-CHECK", "Проверка устройства ${Build.MODEL} (SDK ${Build.VERSION.SDK_INT}): CAM=$cam, MIC=$mic, BIO_BOUND=$hasBioBound (profile=$profileId)")
+                      return obj.toString()
+                  }
+
+                  @JavascriptInterface
+                  fun requestMissingPermissions() {
+                      runOnUiThread {
+                          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                              val needed = mutableListOf<String>()
+                              if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                                  needed.add(android.Manifest.permission.RECORD_AUDIO)
+                              }
+                              if (checkSelfPermission(android.Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+                                  needed.add(android.Manifest.permission.CAMERA)
+                              }
+                              if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                                  needed.add(android.Manifest.permission.POST_NOTIFICATIONS)
+                              }
+                              if (needed.isNotEmpty()) {
+                                  pushNativeLog("ANDROID-PERM", "Запрос системных разрешений у пользователя: ${needed.joinToString()}")
+                                  requestPermissions(needed.toTypedArray(), 101)
+                              } else {
+                                  pushNativeLog("ANDROID-PERM", "Все разрешения (Камера, Микрофон, Уведомления) уже выданы")
+                              }
+                          }
+                      }
+                  }
+
+                  @JavascriptInterface
+                  fun enrollBiometric(profileId: String, pin: String) {
+                      runOnUiThread {
+                          pushNativeLog("BIO-HW", "Запуск аппаратного сканера отпечатка для ПРИВЯЗКИ (profile=$profileId)...")
+                          if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
+                              pushNativeLog("BIO-ERR", "Android SDK ${Build.VERSION.SDK_INT} ниже 28 (Android 9), BiometricPrompt недоступен")
+                              webView.evaluateJavascript("if(window.__onBiometricEnrollResult) window.__onBiometricEnrollResult(false, 'Версия Android ниже 9.0');", null)
+                              return@runOnUiThread
+                          }
+                          try {
+                              val cancelSignal = CancellationSignal()
+                              val prompt = BiometricPrompt.Builder(this@MainActivity)
+                                  .setTitle("Привязка отпечатка пальца")
+                                  .setSubtitle("Приложите палец к сканеру для подтверждения")
+                                  .setDescription("Ваш ПИН-код будет зашифрован и доступен только по вашему отпечатку пальца.")
+                                  .setNegativeButton("Отмена", mainExecutor) { _, _ ->
+                                      pushNativeLog("BIO-HW", "Пользователь отменил привязку отпечатка пальца")
+                                      webView.evaluateJavascript("if(window.__onBiometricEnrollResult) window.__onBiometricEnrollResult(false, 'Отменено пользователем');", null)
+                                  }
+                                  .build()
+
+                              prompt.authenticate(cancelSignal, mainExecutor, object : BiometricPrompt.AuthenticationCallback() {
+                                  override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult?) {
+                                      super.onAuthenticationSucceeded(result)
+                                      val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                                      prefs.edit()
+                                          .putString("bio_pin_$profileId", pin)
+                                          .putString("bio_pin_default", pin)
+                                          .apply()
+                                      pushNativeLog("BIO-OK", "Аппаратный отпечаток УСПЕШНО считан и привязан к профилю $profileId!")
+                                      webView.evaluateJavascript("if(window.__onBiometricEnrollResult) window.__onBiometricEnrollResult(true, 'Отпечаток успешно подтверждён и привязан!');", null)
+                                  }
+
+                                  override fun onAuthenticationError(errorCode: Int, errString: CharSequence?) {
+                                      super.onAuthenticationError(errorCode, errString)
+                                      pushNativeLog("BIO-ERR", "Ошибка сканера при привязке (код $errorCode): $errString")
+                                      val safeErr = JSONObject.quote(errString?.toString() ?: "Ошибка сканера")
+                                      webView.evaluateJavascript("if(window.__onBiometricEnrollResult) window.__onBiometricEnrollResult(false, $safeErr);", null)
+                                  }
+
+                                  override fun onAuthenticationFailed() {
+                                      super.onAuthenticationFailed()
+                                      pushNativeLog("BIO-FAIL", "Отпечаток не распознан датчиком (попробуйте ещё раз)")
+                                  }
+                              })
+                          } catch (e: Exception) {
+                              pushNativeLog("BIO-EXCEPTION", "Исключение BiometricPrompt: ${e.message}")
+                              val safeErr = JSONObject.quote(e.message ?: "Ошибка биометрии")
+                              webView.evaluateJavascript("if(window.__onBiometricEnrollResult) window.__onBiometricEnrollResult(false, $safeErr);", null)
+                          }
+                      }
+                  }
+
+                  @JavascriptInterface
+                  fun authenticateBiometric(profileId: String) {
+                      runOnUiThread {
+                          val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                          val savedPin = prefs.getString("bio_pin_$profileId", null) ?: prefs.getString("bio_pin_default", null)
+                          if (savedPin.isNullOrEmpty()) {
+                              pushNativeLog("BIO-AUTH", "Для профиля $profileId отпечаток ещё не привязан в настройках Приватности")
+                              webView.evaluateJavascript("if(window.__onBiometricAuthResult) window.__onBiometricAuthResult(false, '', 'Сначала привяжите отпечаток пальца в Настройки -> Приватность');", null)
+                              return@runOnUiThread
+                          }
+                          if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
+                              pushNativeLog("BIO-ERR", "Android SDK < 28")
+                              return@runOnUiThread
+                          }
+                          pushNativeLog("BIO-HW", "Запрос аппаратного сканера отпечатка для ВХОДА в профиль $profileId...")
+                          try {
+                              val cancelSignal = CancellationSignal()
+                              val prompt = BiometricPrompt.Builder(this@MainActivity)
+                                  .setTitle("Вход в Hydra")
+                                  .setSubtitle("Приложите палец к сканеру отпечатков")
+                                  .setNegativeButton("Ввести ПИН-код вручную", mainExecutor) { _, _ ->
+                                      pushNativeLog("BIO-HW", "Выбран ручной ввод ПИН-кода")
+                                      webView.evaluateJavascript("if(window.__onBiometricAuthResult) window.__onBiometricAuthResult(false, '', 'Выбран ручной ввод ПИН-кода');", null)
+                                  }
+                                  .build()
+
+                              prompt.authenticate(cancelSignal, mainExecutor, object : BiometricPrompt.AuthenticationCallback() {
+                                  override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult?) {
+                                      super.onAuthenticationSucceeded(result)
+                                      pushNativeLog("BIO-OK", "Отпечаток пальца подтверждён аппаратно! Передача ключа разблокировки...")
+                                      val safePin = JSONObject.quote(savedPin)
+                                      webView.evaluateJavascript("if(window.__onBiometricAuthResult) window.__onBiometricAuthResult(true, $safePin, 'OK');", null)
+                                  }
+
+                                  override fun onAuthenticationError(errorCode: Int, errString: CharSequence?) {
+                                      super.onAuthenticationError(errorCode, errString)
+                                      pushNativeLog("BIO-ERR", "Отмена/ошибка биометрии при входе (код $errorCode): $errString")
+                                      val safeErr = JSONObject.quote(errString?.toString() ?: "Отменено")
+                                      webView.evaluateJavascript("if(window.__onBiometricAuthResult) window.__onBiometricAuthResult(false, '', $safeErr);", null)
+                                  }
+
+                                  override fun onAuthenticationFailed() {
+                                      super.onAuthenticationFailed()
+                                      pushNativeLog("BIO-FAIL", "Неверный отпечаток пальца!")
+                                  }
+                              })
+                          } catch (e: Exception) {
+                              pushNativeLog("BIO-EXCEPTION", "Ошибка вызова сканера: ${e.message}")
+                          }
+                      }
+                  }
+              }
+
+              private fun createNotificationChannel() {
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                      val name = "Messages"
+                      val descriptionText = "New messages from contacts"
+                      val importance = android.app.NotificationManager.IMPORTANCE_DEFAULT
+                      val channel = android.app.NotificationChannel(NOTIFICATION_CHANNEL_ID, name, importance).apply {
+                          description = descriptionText
+                      }
+                      val notificationManager: android.app.NotificationManager =
+                          getSystemService(android.content.Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+                      notificationManager.createNotificationChannel(channel)
+                  }
+              }
+
+              // Лаунчер для Go pickFile()
+              private val filePickerLauncher = registerForActivityResult(
+                  ActivityResultContracts.StartActivityForResult()
+              ) { result ->
+                  if (result.resultCode == Activity.RESULT_OK) {
+                      val uri = result.data?.data
+                      if (uri != null) {
+                          Thread {
+                              try {
+                                  val path = copyFileToInternalStorage(uri)
+                                  pushNativeLog("FILE-PICKER", "Файл скопирован для Go: $path")
+                                  mobile.Mobile.onFileSelected(path)
+                              } catch (e: Exception) {
+                                  pushNativeLog("FILE-ERR", "Ошибка копирования файла: ${e.message}")
+                                  mobile.Mobile.onFileSelected("")
+                              }
+                          }.start()
+                      } else {
+                          pushNativeLog("FILE-PICKER", "Пустой URI файла")
+                          mobile.Mobile.onFileSelected("")
+                      }
+                  } else {
+                      pushNativeLog("FILE-PICKER", "Выбор файла отменён пользователем")
+                      mobile.Mobile.onFileSelected("")
+                  }
+              }
+
+              // Лаунчер для HTML <input type="file"> (onShowFileChooser — Сторис, QR-код, Аватарки!)
+              private val webViewFileChooserLauncher = registerForActivityResult(
+                  ActivityResultContracts.StartActivityForResult()
+              ) { result ->
+                  val cb = webViewFileCallback
+                  webViewFileCallback = null
+                  if (cb == null) return@registerForActivityResult
+                  if (result.resultCode == Activity.RESULT_OK) {
+                      val dataUri = result.data?.data
+                      if (dataUri != null) {
+                          pushNativeLog("WEB-FILE", "Выбран файл в WebView: $dataUri")
+                          cb.onReceiveValue(arrayOf(dataUri))
+                          return@registerForActivityResult
+                      }
+                  }
+                  pushNativeLog("WEB-FILE", "Выбор файла в WebView отменён")
+                  cb.onReceiveValue(null)
+              }
+
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+
+                  window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                  window.statusBarColor = android.graphics.Color.parseColor("#121212")
+                  window.navigationBarColor = android.graphics.Color.parseColor("#121212")
+
+                  window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                  window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+
+                  webView = WebView(this).apply {
+                      layoutParams = android.view.ViewGroup.LayoutParams(
+                          android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                          android.view.ViewGroup.LayoutParams.MATCH_PARENT
+                      )
+                      setBackgroundColor(android.graphics.Color.parseColor("#121212"))
+                  }
+                  setContentView(webView)
+
+                  setupWebView()
+                  startGoService()
+                  createNotificationChannel()
+
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                      val needed = mutableListOf<String>()
+                      if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                          needed.add(android.Manifest.permission.RECORD_AUDIO)
+                      }
+                      if (checkSelfPermission(android.Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+                          needed.add(android.Manifest.permission.CAMERA)
+                      }
+                      if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                          needed.add(android.Manifest.permission.POST_NOTIFICATIONS)
+                      }
+                      if (needed.isNotEmpty()) {
+                          requestPermissions(needed.toTypedArray(), 101)
+                      }
+                  }
+
+                  mobile.Mobile.setPlatformBridge(this)
+              }
+
+              override fun pickFile() {
+                  runOnUiThread {
+                      try {
+                          pushNativeLog("GO-PICK", "Открытие системного выбора файла Android...")
+                          val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
+                              type = "*/*"
+                              addCategory(Intent.CATEGORY_OPENABLE)
+                              putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("image/*", "video/*", "application/pdf", "text/*", "application/zip"))
+                          }
+                          filePickerLauncher.launch(intent)
+                      } catch (e: Exception) {
+                          pushNativeLog("GO-PICK-ERR", "Ошибка запуска пикера: ${e.message}")
+                          mobile.Mobile.onFileSelected("")
+                      }
+                  }
+              }
+
+              override fun shareFile(path: String) {
+                  runOnUiThread {
+                      try {
+                          val file = File(path)
+                          if (!file.exists()) return@runOnUiThread
+                          val uri = androidx.core.content.FileProvider.getUriForFile(
+                              this,
+                              "com.teleghost.app.fileprovider",
+                              file
+                          )
+                          val intent = Intent(Intent.ACTION_SEND).apply {
+                              type = "application/zip"
+                              putExtra(Intent.EXTRA_STREAM, uri)
+                              addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                          }
+                          startActivity(Intent.createChooser(intent, "Share Hydra Backup"))
+                      } catch (e: Exception) {
+                          android.util.Log.e(TAG, "Failed to share file", e)
+                      }
+                  }
+              }
+
+              override fun clipboardSet(text: String) {
+                  runOnUiThread {
+                      try {
+                          val clipboard = getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                          val clip = android.content.ClipData.newPlainText("Hydra", text)
+                          clipboard.setPrimaryClip(clip)
+                      } catch (e: Exception) {
+                          android.util.Log.e(TAG, "Clipboard set failed", e)
+                      }
+                  }
+              }
+
+              override fun showNotification(title: String, message: String) {
+                  runOnUiThread {
+                      try {
+                          val builder = androidx.core.app.NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
+                              .setSmallIcon(R.mipmap.ic_launcher)
+                              .setContentTitle(title)
+                              .setContentText(message)
+                              .setPriority(androidx.core.app.NotificationCompat.PRIORITY_DEFAULT)
+                              .setAutoCancel(true)
+                              .setOngoing(false)
+
+                          val intent = Intent(this, MainActivity::class.java).apply {
+                              flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+                          }
+                          val pendingIntent: android.app.PendingIntent = android.app.PendingIntent.getActivity(this, 0, intent, android.app.PendingIntent.FLAG_IMMUTABLE)
+                          builder.setContentIntent(pendingIntent)
+
+                          with(androidx.core.app.NotificationManagerCompat.from(this)) {
+                              notify(System.currentTimeMillis().toInt(), builder.build())
+                          }
+                      } catch (e: Exception) {
+                          android.util.Log.e(TAG, "Notification failed", e)
+                      }
+                  }
+              }
+
+              override fun saveFile(path: String, filename: String) {
+                  runOnUiThread {
+                      try {
+                          val file = File(path)
+                          if (!file.exists()) return@runOnUiThread
+                          val contentValues = android.content.ContentValues().apply {
+                              put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, filename)
+                              val mime = try {
+                                  val ext = MimeTypeMap.getFileExtensionFromUrl(filename)
+                                  MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: "application/octet-stream"
+                              } catch(e: Exception) { "application/octet-stream" }
+                              put(android.provider.MediaStore.MediaColumns.MIME_TYPE, mime)
+                              if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                                  put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS)
+                                  put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1)
+                              }
+                          }
+                          val resolver = applicationContext.contentResolver
+                          val uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                              resolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
+                          } else {
+                              resolver.insert(android.provider.MediaStore.Files.getContentUri("external"), contentValues)
+                          }
+                          if (uri != null) {
+                              resolver.openOutputStream(uri)?.use { output ->
+                                  java.io.FileInputStream(file).use { input ->
+                                      input.copyTo(output)
+                                  }
+                              }
+                              if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                                  contentValues.clear()
+                                  contentValues.put(android.provider.MediaStore.MediaColumns.IS_PENDING, 0)
+                                  resolver.update(uri, contentValues, null, null)
+                              }
+                              android.widget.Toast.makeText(this, "Сохранено в Загрузки", android.widget.Toast.LENGTH_SHORT).show()
+                          }
+                      } catch (e: Exception) {
+                          android.util.Log.e(TAG, "Save file failed", e)
+                      }
+                  }
+              }
+
+              private fun copyFileToInternalStorage(uri: Uri): String {
+                  val contentResolver = applicationContext.contentResolver
+                  val mimeType = contentResolver.getType(uri) ?: "application/octet-stream"
+                  val ext = MimeTypeMap.getSingleton().getExtensionFromMimeType(mimeType) ?: "bin"
+                  val filename = "upload_${UUID.randomUUID()}.$ext"
+                  val tempDir = File(filesDir, "tmp_uploads")
+                  if (!tempDir.exists()) tempDir.mkdirs()
+                  val destFile = File(tempDir, filename)
+                  contentResolver.openInputStream(uri)?.use { input ->
+                      FileOutputStream(destFile).use { output ->
+                          input.copyTo(output)
+                      }
+                  } ?: throw Exception("Cannot open input stream")
+                  return destFile.absolutePath
+              }
+
+              @SuppressLint("SetJavaScriptEnabled")
+              private fun setupWebView() {
+                  webView.settings.apply {
+                      javaScriptEnabled = true
+                      domStorageEnabled = true
+                      databaseEnabled = true
+                      allowFileAccess = true
+                      allowContentAccess = true
+                      mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                      cacheMode = WebSettings.LOAD_DEFAULT
+                      mediaPlaybackRequiresUserGesture = false
+                      useWideViewPort = false
+                      loadWithOverviewMode = false
+                      setSupportZoom(false)
+                      builtInZoomControls = false
+                      displayZoomControls = false
+                  }
+
+                  // Подключаем нативный интерфейс window.HydraNative
+                  webView.addJavascriptInterface(HydraNativeBridge(), "HydraNative")
+
+                  webView.webViewClient = object : WebViewClient() {
+                      override fun shouldOverrideUrlLoading(
+                          view: WebView?,
+                          request: WebResourceRequest?
+                      ): Boolean {
+                          val url = request?.url?.toString() ?: return false
+                          if (url.startsWith(SERVER_URL)) return false
+                          startActivity(Intent(Intent.ACTION_VIEW, request?.url))
+                          return true
+                      }
+
+                      override fun onReceivedError(
+                          view: WebView?,
+                          request: WebResourceRequest?,
+                          error: WebResourceError?
+                      ) {
+                          if (request?.isForMainFrame == true) {
+                              view?.postDelayed({ waitForServerAndLoad() }, RETRY_DELAY_MS)
+                          }
+                      }
+                  }
+
+                  webView.webChromeClient = object : WebChromeClient() {
+                      override fun onPermissionRequest(request: PermissionRequest?) {
+                          runOnUiThread {
+                              pushNativeLog("WEB-PERM", "Выдача WebRTC доступа к микрофону/камере: ${request?.resources?.joinToString()}")
+                              request?.grant(request.resources)
+                          }
+                      }
+
+                      // КРИТИЧЕСКИЙ ФИКС: теперь ЛЮБОЙ <input type="file"> (в Сторис, в QR-коде, в Профиле) открывает системный выбор фото/камеры Android!
+                      override fun onShowFileChooser(
+                          webView: WebView?,
+                          filePathCallback: ValueCallback<Array<Uri>>?,
+                          fileChooserParams: FileChooserParams?
+                      ): Boolean {
+                          webViewFileCallback?.onReceiveValue(null)
+                          webViewFileCallback = filePathCallback
+                          return try {
+                              pushNativeLog("WEB-CHOOSER", "Открытие системной Галереи/Камеры для выбора изображения...")
+                              val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
+                                  addCategory(Intent.CATEGORY_OPENABLE)
+                                  type = "image/*"
+                              }
+                              webViewFileChooserLauncher.launch(Intent.createChooser(intent, "Выберите изображение или QR-код"))
+                              true
+                          } catch (e: Exception) {
+                              pushNativeLog("WEB-CHOOSER-ERR", "Ошибка открытия галереи: ${e.message}")
+                              webViewFileCallback = null
+                              false
+                          }
+                      }
+
+                      override fun onConsoleMessage(msg: ConsoleMessage?): Boolean {
+                          android.util.Log.d(TAG, "JS: ${msg?.message()} [${msg?.sourceId()}:${msg?.lineNumber()}]")
+                          return true
+                      }
+                  }
+              }
+
+              private fun startGoService() {
+                  val intent = Intent(this, TeleGhostService::class.java)
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                      startForegroundService(intent)
+                  } else {
+                      startService(intent)
+                  }
+                  waitForServerAndLoad()
+              }
+
+              private fun waitForServerAndLoad(retryCount: Int = 0) {
+                  if (retryCount >= MAX_RETRIES) {
+                      runOnUiThread {
+                          webView.loadData(
+                              "<html><body style='background:#121212;color:#fff;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;'><div style='text-align:center;'><h2>⚠️ Не удалось запустить сервер</h2><p>Попробуйте перезапустить приложение</p></div></body></html>",
+                              "text/html", "UTF-8"
+                          )
+                      }
+                      return
+                  }
+
+                  Thread {
+                      try {
+                          val url = java.net.URL(HEALTH_URL)
+                          val connection = url.openConnection() as java.net.HttpURLConnection
+                          connection.connectTimeout = 1000
+                          connection.readTimeout = 1000
+                          connection.requestMethod = "GET"
+                          val responseCode = connection.responseCode
+                          connection.disconnect()
+                          if (responseCode == 200) {
+                              runOnUiThread {
+                                  webView.loadUrl(SERVER_URL)
+                              }
+                              return@Thread
+                          }
+                      } catch (e: Exception) {
+                          android.util.Log.d(TAG, "Health check failed: ${e.message}")
+                      }
+                      runOnUiThread {
+                          webView.postDelayed({ waitForServerAndLoad(retryCount + 1) }, RETRY_DELAY_MS)
+                      }
+                  }.start()
+              }
+
+              override fun onBackPressed() {
+                  if (webView.canGoBack()) {
+                      webView.goBack()
+                  } else {
+                      moveTaskToBack(true)
+                  }
+              }
+
+              override fun onDestroy() {
+                  webView.destroy()
+                  super.onDestroy()
+              }
+
+              override fun onResume() {
+                  super.onResume()
+                  webView.onResume()
+                  mobile.Mobile.setPlatformBridge(this)
+              }
+
+              override fun onPause() {
+                  webView.onPause()
+                  super.onPause()
+              }
+          }
+          '''
+          with open(kt_path, "w", encoding="utf-8") as f:
+              f.write(clean_kt)
+          print("[OK] MainActivity.kt: встроен аппаратный BiometricPrompt и onShowFileChooser для Сторис и QR")
+
+          # 3. Settings.svelte:
+          #    При нажатии "👆 Привязать" вызываем настоящий аппаратный сканер window.HydraNative.enrollBiometric(profileId, pin)!
+          #    Пока палец реально не приложен к сканеру — привязка не завершается!
+          settings_path = "frontend/src/components/Settings.svelte"
+          if os.path.exists(settings_path):
+              with open(settings_path, "r", encoding="utf-8") as f:
+                  st = f.read()
+
+              old_bio_block = r"let bioPinToBind[\s\S]*?async function setupAndTestBiometric\(\)\s*\{[\s\S]*?\n\s*\}"
+              new_bio_block = """let bioPinToBind = '';
+              let bioBindStatus = localStorage.getItem('hydra_hw_bio_bound') === '1'
+                  ? '✅ Аппаратный отпечаток пальца привязан и активен'
+                  : 'ℹ️ Отпечаток ещё не привязан';
+
+              if (typeof window !== 'undefined') {
+                  window.__onBiometricEnrollResult = (success, message) => {
+                      if (success) {
+                          biometricEnabled = true;
+                          localStorage.setItem('hydra_biometric', '1');
+                          localStorage.setItem('hydra_hw_bio_bound', '1');
+                          bioBindStatus = '✅ ' + message;
+                          bioPinToBind = '';
+                      } else {
+                          bioBindStatus = '❌ ' + message;
+                      }
+                  };
+              }
+
+              async function setupAndTestBiometric() {
+                  const cleanPin = (bioPinToBind || '').trim();
+                  if (cleanPin.length < 4) {
+                      bioBindStatus = '⚠️ Сначала введите ваш текущий ПИН-код (минимум 4 символа) в поле ниже';
+                      if (window.__addHydraLog) window.__addHydraLog('BIO-UI', 'Попытка привязки отпечатка без ввода ПИН-кода');
+                      return;
+                  }
+                  const profId = selectedProfile?.id || 'default';
+                  if (window.HydraNative && typeof window.HydraNative.enrollBiometric === 'function') {
+                      bioBindStatus = '👆 Приложите палец к сканеру отпечатков вашего телефона...';
+                      window.HydraNative.enrollBiometric(profId, cleanPin);
+                  } else {
+                      bioBindStatus = '❌ Нативный модуль биометрии недоступен на этом устройстве';
+                  }
+              }"""
+
+              st = re.sub(old_bio_block, lambda _: new_bio_block, st, count=1)
+              with open(settings_path, "w", encoding="utf-8") as f:
+                  f.write(st)
+              print("[OK] Settings.svelte: привязка отпечатка теперь требует реального прикладывания пальца к сканеру")
+
+          # 4. Auth.svelte:
+          #    - УБИРАЕМ авто-ввод пароля без сканера!
+          #    - Перед вводом пароля проверяем системные разрешения и статус аппаратной привязки отпечатка (window.HydraNative.checkSystemStatus)
+          #    - Если отпечаток реально привязан — вызываем системное окно сканера Android (window.HydraNative.authenticateBiometric). Пароль вводится ТОЛЬКО после того, как датчик считает палец!
+          auth_path = "frontend/src/components/Auth.svelte"
+          if os.path.exists(auth_path):
+              with open(auth_path, "r", encoding="utf-8") as f:
+                  au = f.read()
+
+              old_trig = r"async function triggerBiometricUnlock\(\)\s*\{[\s\S]*?\n\s*\}"
+              new_trig = """let systemPermStatus = null;
+              let bioPromptStatus = '';
+
+              if (typeof window !== 'undefined') {
+                  window.__onBiometricAuthResult = async (success, decryptedPin, message) => {
+                      if (success && decryptedPin) {
+                          bioPromptStatus = '✅ Отпечаток распознан! Вход...';
+                          pinInput = decryptedPin;
+                          await handleUnlock();
+                      } else {
+                          bioPromptStatus = message ? ('ℹ️ ' + message) : '';
+                      }
+                  };
+              }
+
+              function checkDevicePermissionsAndBio(profId) {
+                  if (window.HydraNative && typeof window.HydraNative.checkSystemStatus === 'function') {
+                      try {
+                          const raw = window.HydraNative.checkSystemStatus(profId || 'default');
+                          systemPermStatus = JSON.parse(raw);
+                      } catch (e) {
+                          if (window.__addHydraLog) window.__addHydraLog('SYS-CHECK-ERR', String(e));
+                      }
+                  }
+              }
+
+              async function triggerBiometricUnlock() {
+                  const profId = selectedProfile?.id || 'default';
+                  checkDevicePermissionsAndBio(profId);
+                  if (localStorage.getItem('hydra_biometric') === '0') {
+                      if (window.__addHydraLog) window.__addHydraLog('BIO-SKIP', 'Биометрия отключена переключателем в настройках');
+                      return;
+                  }
+                  if (window.HydraNative && typeof window.HydraNative.authenticateBiometric === 'function') {
+                      if (systemPermStatus && !systemPermStatus.biometricBound) {
+                          bioPromptStatus = 'ℹ️ Отпечаток ещё не привязан (введите ПИН вручную и привяжите его в Настройки → Приватность)';
+                          return;
+                      }
+                      bioPromptStatus = '👆 Приложите палец к сканеру...';
+                      window.HydraNative.authenticateBiometric(profId);
+                  }
+              }"""
+
+              au = re.sub(old_trig, lambda _: new_trig, au, count=1)
+
+              # Вблоке ввода ПИН-кода выводим индикатор проверки разрешений и статуса биометрии перед вводом пароля
+              perm_banner = """
+              {#if systemPermStatus}
+                  <div style="margin-bottom: 12px; padding: 10px 12px; border-radius: 14px; background: rgba(138,180,248,0.08); border: 1px solid rgba(138,180,248,0.2); font-size: 11px; color: #E3E3E3; text-align: left;">
+                      <div style="font-weight: 700; color: #8AB4F8; margin-bottom: 4px;">🛡️ Проверка безопасности ({systemPermStatus.device}):</div>
+                      <div>📷 Камера: {systemPermStatus.camera ? '✅ Разрешено' : '⚠️ Нет доступа'} | 🎤 Микрофон: {systemPermStatus.microphone ? '✅ Разрешено' : '⚠️ Нет доступа'}</div>
+                      <div>👆 Биометрия: {systemPermStatus.biometricBound ? '✅ Отпечаток привязан (активен)' : '⚪ Не привязан (вход по ПИН)'}</div>
+                      {#if !systemPermStatus.camera || !systemPermStatus.microphone}
+                          <button type="button" on:click={() => window.HydraNative?.requestMissingPermissions()} style="margin-top: 6px; background: #8AB4F8; color: #062E6F; border: none; border-radius: 100px; padding: 4px 10px; font-size: 11px; font-weight: 700;">Выдать разрешения</button>
+                      {/if}
+                  </div>
+              {/if}
+              {#if bioPromptStatus}
+                  <div style="margin-bottom: 10px; font-size: 12px; color: #8AB4F8; font-weight: 600;">{bioPromptStatus}</div>
+              {/if}
+              """
+              if "Проверка безопасности (" not in au:
+                  au = au.replace('<div class="pin-entry-box">', perm_banner + '\n            <div class="pin-entry-box">', 1)
+
+              # Убираем старое авто-сохранение ПИН-кода без отпечатка при обычном входе!
+              au = au.replace(
+                  "if (selectedProfile?.id && pinInput) {\n                localStorage.setItem('hydra_bio_pin_' + selectedProfile.id, pinInput);\n            }",
+                  "// ПИН для биометрии сохраняется только через аппаратный сканер BiometricPrompt"
+              )
+
+              with open(auth_path, "w", encoding="utf-8") as f:
+                  f.write(au)
+              print("[OK] Auth.svelte: проверка разрешений перед вводом ПИН и реальный запрос отпечатка через BiometricPrompt")
+
+          # 5. Sidebar.svelte и Modals.svelte: добавляем подробное логирование выбора картинки в Сторис и сканирования QR
+          sidebar_path = "frontend/src/components/Sidebar.svelte"
+          if os.path.exists(sidebar_path):
+              with open(sidebar_path, "r", encoding="utf-8") as f:
+                  sb = f.read()
+
+              # Делаем двойную поддержку в Сторис: и через стандартный <input type="file"> (который теперь работает благодаря onShowFileChooser в MainActivity.kt!), и через SelectImage
+              both_story_picker = """                      <label style="display: block; width: 100%; text-align: center; padding: 12px; border-radius: 100px; background: #28292D; color: #8AB4F8; border: 1px solid rgba(138,180,248,0.35); font-weight: 700; cursor: pointer; margin-bottom: 10px;">
+                          📷 Выбрать фото / картинку из Галереи
+                          <input type="file" accept="image/*" style="display: none;" on:change={handleStoryFile} />
+                      </label>"""
+              sb = re.sub(
+                  r'<button type="button" on:click=\{pickNativeStoryImage\}[\s\S]*?</button>',
+                  lambda _: both_story_picker,
+                  sb
+              )
+              sb = sb.replace(
+                  "const reader = new FileReader();",
+                  "if (window.__addHydraLog) window.__addHydraLog('STORY-FILE', 'Выбрана картинка для Сторис: ' + file.name + ' (' + file.size + ' байт, тип=' + file.type + ')');\n        const reader = new FileReader();"
+              )
+              with open(sidebar_path, "w", encoding="utf-8") as f:
+                  f.write(sb)
+              print("[OK] Sidebar.svelte: выбор фото в Сторис подключён к нативному onShowFileChooser")
+
+          # 6. Расширяем глобальный логгер в frontend/index.html, чтобы он НЕ обрезал ответы и показывал все детали состояния
+          index_html_path = "frontend/index.html"
+          if os.path.exists(index_html_path):
+              with open(index_html_path, "r", encoding="utf-8") as f:
+                  ih = f.read()
+              # Увеличиваем лимит вывода аргументов и результатов RPC с 100 до 600 символов и убираем спам GetNetworkStatus из лога
+              ih = ih.replace(".slice(0, 140)", ".slice(0, 600)")
+              ih = ih.replace(".slice(0, 100)", ".slice(0, 600)")
+              ih = ih.replace(
+                  "if (u.indexOf('/api/') !== -1 && u.indexOf('/api/events') === -1 && u.indexOf('AppendDebugLog') === -1)",
+                  "if (u.indexOf('/api/') !== -1 && u.indexOf('/api/events') === -1 && u.indexOf('AppendDebugLog') === -1 && u.indexOf('GetNetworkStatus') === -1)"
+              )
+              with open(index_html_path, "w", encoding="utf-8") as f:
+                  f.write(ih)
+              print("[OK] frontend/index.html: убран фоновый спам GetNetworkStatus и увеличена глубина логов до 600 символов")
           PYEOF
-          python3 fix_router_call.py
-          rm -f fix_router_call.py
+          python3 apply_hardware_fixes.py
+          rm -f apply_hardware_fixes.py
           gofmt -w internal/ mobile/
 
-      - name: Commit Fixed appcore.go
+      - name: Install jsQR & Build Frontend (Svelte)
+        working-directory: ./frontend
+        run: |
+          npm install
+          npm install jsqr --save
+          npm run build
+
+      - name: Commit Hardware Biometrics & FileChooser Fixes
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           if [ -n "$(git status --porcelain)" ]; then
             git add .
-            git commit -m "Fix router.NewSAMRouter(nil) signature in appcore.go [skip ci]"
+            git commit -m "Add real Android BiometricPrompt hardware scanner, WebView onShowFileChooser for QR/Stories & pre-login security check [skip ci]"
             git pull --rebase origin main || true
             git push || true
           fi
@@ -77,12 +855,6 @@ jobs:
 
       - name: Clean Go Mod
         run: go mod tidy
-
-      - name: Build Frontend (Svelte)
-        working-directory: ./frontend
-        run: |
-          npm install
-          npm run build
 
       - name: Copy Frontend to Mobile Assets
         run: |
